@@ -50,6 +50,23 @@ interface Controls {
   spawnSpitter?: Phaser.Input.Keyboard.Key;
 }
 
+interface TouchVector {
+  x: number;
+  y: number;
+}
+
+const TOUCH_TAP_SLOP = 32;
+const JOYSTICK_CENTER_X = 100;
+const JOYSTICK_CENTER_Y = HEIGHT - 176;
+const JOYSTICK_INTERACTION_RADIUS = 128;
+const MOBILE_ACTION_RADIUS = 40;
+const MOBILE_ACTION_HIT_RADIUS = 48;
+const MOBILE_PAUSE_RADIUS = 24;
+const MOBILE_PAUSE_HIT_RADIUS = 32;
+const MOBILE_ACTION_Y = HEIGHT - 120;
+const MOBILE_ACTION_STEP = 88;
+const MOBILE_ACTION_RIGHT_MARGIN = 48;
+
 interface TreeLayers {
   x: number;
   y: number;
@@ -160,6 +177,39 @@ export class ArenaScene extends Phaser.Scene {
   private barrelDropEvent?: Phaser.Time.TimerEvent;
   private barrelSlots: BarrelSlot[] = [];
   private bossHazards: BossHazard[] = [];
+  private readonly touchEnabled = typeof window !== 'undefined'
+    && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  private touchMovePointerId: number | null = null;
+  private touchAimPointerId: number | null = null;
+  private touchMove: TouchVector = { x: 0, y: 0 };
+  private touchAim: TouchVector = { x: WIDTH / 2 + 160, y: HEIGHT / 2 };
+  private touchAimStart: TouchVector = { x: 0, y: 0 };
+  private touchAimDragged = false;
+  private joystickBase?: Phaser.GameObjects.Graphics;
+  private joystickThumb?: Phaser.GameObjects.Graphics;
+  private mobileControls?: Phaser.GameObjects.Container;
+  private mobilePauseControl?: Phaser.GameObjects.Container;
+  private mobileActionAvailability: Partial<Record<'flare' | 'interact', (available: boolean, progress?: number) => void>> = {};
+  private mobileActionPositions = {
+    pause: {
+      x: WIDTH - 56,
+      y: 64,
+      radius: MOBILE_PAUSE_RADIUS,
+      hitRadius: MOBILE_PAUSE_HIT_RADIUS,
+    },
+    flare: {
+      x: WIDTH - MOBILE_ACTION_RIGHT_MARGIN - MOBILE_ACTION_STEP,
+      y: MOBILE_ACTION_Y,
+      radius: MOBILE_ACTION_RADIUS,
+      hitRadius: MOBILE_ACTION_HIT_RADIUS,
+    },
+    interact: {
+      x: WIDTH - MOBILE_ACTION_RIGHT_MARGIN,
+      y: MOBILE_ACTION_Y,
+      radius: MOBILE_ACTION_RADIUS,
+      hitRadius: MOBILE_ACTION_HIT_RADIUS,
+    },
+  };
 
   private audio!: AudioSystem;
   private flares!: FlareSystem;
@@ -289,7 +339,8 @@ export class ArenaScene extends Phaser.Scene {
     this.health = 100;
     this.startedAt = this.time.now;
     this.pausedAt = 0;
-    this.runId = crypto.randomUUID();
+    this.runId = globalThis.crypto?.randomUUID?.()
+      ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     this.lastShot = 0;
     this.lastHurt = -1000;
     this.lastHurtByPlayer.clear();
@@ -524,7 +575,12 @@ export class ArenaScene extends Phaser.Scene {
     );
 
     this.time.delayedCall(700, () => {
-      if (!this.waitingForPartner) this.announce('HOLD THE OUTPOST', 'WASD TO MOVE • MOUSE TO AIM AND FIRE');
+      if (!this.waitingForPartner) this.announce(
+        'HOLD THE OUTPOST',
+        this.touchEnabled
+          ? 'LEFT STICK TO MOVE • TAP RIGHT SIDE TO FIRE'
+          : 'WASD TO MOVE • MOUSE TO AIM AND FIRE',
+      );
     });
     this.cameras.main.fadeIn(350, 4, 7, 6);
     window.dispatchEvent(new CustomEvent('last-light:game-ready'));
@@ -2528,12 +2584,17 @@ export class ArenaScene extends Phaser.Scene {
     ).setOrigin(0.5, 0).setDepth(30);
     this.helpText = this.add.text(
       WIDTH / 2,
-      HEIGHT - 20,
+      this.touchEnabled ? HEIGHT - 46 : HEIGHT - 20,
       this.isDuo
-        ? 'WASD / ARROWS  MOVE  •  MOUSE  AIM + FIRE  •  F  FLARE  •  E  SUPPLY'
+        ? this.touchEnabled
+          ? 'LEFT STICK  MOVE  •  TAP  AIM + FIRE  •  DRAG  AIM  •  TOP-RIGHT  PAUSE'
+          : 'WASD / ARROWS  MOVE  •  MOUSE  AIM + FIRE  •  F  FLARE  •  E  SUPPLY'
+        : this.touchEnabled
+          ? 'LEFT STICK  MOVE  •  TAP  AIM + FIRE  •  DRAG  AIM  •  TOP-RIGHT  PAUSE'
         : 'WASD / ARROWS  MOVE  •  MOUSE  AIM + FIRE  •  P / ESC  PAUSE',
       {
       ...labelStyle,
+      ...(this.touchEnabled ? { fontSize: '10px' } : {}),
       color: '#c9b8ad',
       backgroundColor: '#0b0e0ccc',
       padding: { x: 8, y: 4 },
@@ -2582,7 +2643,9 @@ export class ArenaScene extends Phaser.Scene {
       strokeThickness: 7,
     }).setOrigin(0.5);
     const pauseControls = this.add.text(WIDTH / 2, HEIGHT / 2 - 31,
-      'MOVE       WASD / ARROWS\nAIM        MOUSE\nFIRE       LEFT MOUSE\nFLARE      F\nINTERACT   E', {
+      this.touchEnabled
+        ? 'MOVE       LEFT STICK\nAIM        DRAG RIGHT SIDE\nFIRE       TAP RIGHT SIDE\nFLARE      FLARE BUTTON\nINTERACT   OPEN BUTTON'
+        : 'MOVE       WASD / ARROWS\nAIM        MOUSE\nFIRE       LEFT MOUSE\nFLARE      F\nINTERACT   E', {
         ...labelStyle,
         fontSize: '15px',
         color: '#d4c9b8',
@@ -2610,6 +2673,7 @@ export class ArenaScene extends Phaser.Scene {
       HEIGHT / 2 + 160,
       this.isNetworkClient ? 'HOST CONTROLLED  //  WAIT FOR RESUME' : 'P / ESC  RESUME FIELD OPERATIONS',
       {
+        ...(this.touchEnabled ? { fontSize: '11px' } : {}),
       ...labelStyle,
       fontSize: '11px',
       color: '#81766f',
@@ -2628,6 +2692,165 @@ export class ArenaScene extends Phaser.Scene {
       ...pauseMenuButton,
       pauseShortcut,
     ]).setDepth(60).setVisible(false);
+
+    if (this.touchEnabled) this.makeTouchInterface();
+  }
+
+  private makeTouchInterface(): void {
+    this.mobileActionAvailability = {};
+    const controls = this.add.container(0, 0).setDepth(55);
+    const pauseControl = this.add.container(0, 0).setDepth(75);
+    const joystickCenter = { x: JOYSTICK_CENTER_X, y: JOYSTICK_CENTER_Y };
+
+    this.joystickBase = this.add.graphics();
+    this.joystickBase.fillStyle(0x101713, 0.62).fillCircle(joystickCenter.x, joystickCenter.y, 92);
+    this.joystickBase.lineStyle(3, 0xb39b72, 0.52).strokeCircle(joystickCenter.x, joystickCenter.y, 92);
+    this.joystickBase.lineStyle(1, 0x6e5c4e, 0.45).strokeCircle(joystickCenter.x, joystickCenter.y, 65);
+    this.joystickBase.setAlpha(0.78);
+
+    this.joystickThumb = this.add.graphics();
+    this.joystickThumb.fillStyle(0xc76551, 0.8).fillCircle(joystickCenter.x, joystickCenter.y, 38);
+    this.joystickThumb.lineStyle(3, 0xf1b287, 0.7).strokeCircle(joystickCenter.x, joystickCenter.y, 38);
+    this.joystickThumb.setAlpha(0.92);
+    controls.add([this.joystickBase, this.joystickThumb]);
+
+    const makeActionIcon = (x: number, y: number, kind: 'pause' | 'flare' | 'open') => {
+      const iconKey = kind === 'pause'
+        ? 'mobile-pause-icon'
+        : kind === 'flare'
+          ? 'mobile-flare-icon'
+          : 'mobile-open-icon';
+      return this.add.image(x, y, iconKey).setOrigin(0.5);
+    };
+
+    const actionButton = (
+      x: number,
+      y: number,
+      label: string,
+      borderColor: number,
+      action: () => void,
+      fontSize = '13px',
+      iconKind?: 'pause' | 'flare' | 'open',
+      target: Phaser.GameObjects.Container = controls,
+    ) => {
+      const button = this.add.graphics().setPosition(x, y);
+      const buttonRadius = iconKind === 'pause' ? MOBILE_PAUSE_RADIUS : MOBILE_ACTION_RADIUS;
+      const buttonHitRadius = iconKind === 'pause' ? MOBILE_PAUSE_HIT_RADIUS : MOBILE_ACTION_HIT_RADIUS;
+      button.setInteractive(
+        new Phaser.Geom.Rectangle(
+          -buttonHitRadius,
+          -buttonHitRadius,
+          buttonHitRadius * 2,
+          buttonHitRadius * 2,
+        ),
+        Phaser.Geom.Rectangle.Contains,
+      );
+      const halfSize = buttonRadius;
+      const cornerCut = iconKind === 'pause' ? 6 : 10;
+      const borderPoints = [
+        { x: -halfSize + cornerCut, y: -halfSize },
+        { x: halfSize - cornerCut, y: -halfSize },
+        { x: halfSize, y: -halfSize + cornerCut },
+        { x: halfSize, y: halfSize - cornerCut },
+        { x: halfSize - cornerCut, y: halfSize },
+        { x: -halfSize + cornerCut, y: halfSize },
+        { x: -halfSize, y: halfSize - cornerCut },
+        { x: -halfSize, y: -halfSize + cornerCut },
+      ];
+      const drawBorder = (color: number, width: number, alpha: number) => {
+        button.clear().lineStyle(width, color, alpha).strokePoints(borderPoints, true);
+      };
+      const chargeFill = iconKind === 'flare'
+        ? this.add.graphics().setPosition(x, y)
+        : undefined;
+      let available = true;
+      let active = false;
+      let loadingProgress = 0;
+      const drawChargeFill = () => {
+        chargeFill?.clear();
+        if (!chargeFill || loadingProgress <= 0) return;
+        const innerHalf = buttonRadius - 5;
+        const fillHeight = innerHalf * 2 * loadingProgress;
+        chargeFill
+          .fillStyle(0xe55a45, available ? 0.58 : 0.4)
+          .fillRect(-innerHalf, innerHalf - fillHeight, innerHalf * 2, fillHeight);
+      };
+      const updateVisualState = () => {
+        drawBorder(
+          available && active ? 0xffe2b5 : borderColor,
+          available && active ? 3 : 2,
+          available ? (active ? 1 : 0.9) : 0.3,
+        );
+        button.setAlpha(available ? 1 : 0.45);
+        content.setAlpha(available ? (active ? 1 : 0.92) : 0.28);
+        drawChargeFill();
+      };
+      const content = iconKind
+        ? makeActionIcon(x, y, iconKind)
+        : this.add.text(x, y, label, {
+          fontFamily: '"Share Tech Mono", monospace',
+          fontSize,
+          color: '#fff0d5',
+          align: 'center',
+      }).setOrigin(0.5);
+      const setRestingState = () => {
+        active = false;
+        updateVisualState();
+      };
+      const setActiveState = () => {
+        active = true;
+        updateVisualState();
+      };
+      const setAvailable = (nextAvailable: boolean, progress = 0) => {
+        available = nextAvailable;
+        loadingProgress = progress;
+        updateVisualState();
+      };
+      updateVisualState();
+      button.on('pointerdown', () => {
+        setActiveState();
+        action();
+      });
+      button.on('pointerup', setRestingState);
+      button.on('pointerover', setActiveState);
+      button.on('pointerout', setRestingState);
+      if (iconKind === 'flare') this.mobileActionAvailability.flare = setAvailable;
+      if (iconKind === 'open') this.mobileActionAvailability.interact = setAvailable;
+      if (chargeFill) target.add(chargeFill);
+      target.add(button);
+      target.add(content);
+    };
+
+    actionButton(
+      this.mobileActionPositions.interact.x,
+      this.mobileActionPositions.interact.y,
+      'OPEN',
+      0x8b9a6b,
+      () => this.supplies?.interact(),
+      '13px',
+      'open',
+    );
+    actionButton(
+      this.mobileActionPositions.flare.x,
+      this.mobileActionPositions.flare.y,
+      'FLARE',
+      0xe55a45,
+      () => this.flares?.fire(this.currentAimAngle(), this.time.now),
+      '13px',
+      'flare',
+    );
+    actionButton(
+      this.mobileActionPositions.pause.x,
+      this.mobileActionPositions.pause.y,
+      '',
+      0xe2c690,
+      () => this.togglePause(),
+      '13px',
+      'pause',
+      pauseControl,
+    );
+    this.mobileControls = controls;
+    this.mobilePauseControl = pauseControl;
   }
 
   private makeOverlayButton(
@@ -2707,10 +2930,102 @@ export class ArenaScene extends Phaser.Scene {
         Phaser.Input.Keyboard.KeyCodes.F6,
       ]);
     }
-    this.input.mouse!.disableContextMenu();
-    this.input.on('pointerdown', () => {
+    this.input.mouse?.disableContextMenu();
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (this.sound.locked) this.sound.unlock?.();
+      if (!this.touchEnabled || this.isPaused || this.isGameOver || this.isTouchActionPoint(pointer.worldX, pointer.worldY)) return;
+
+      if (this.isJoystickPoint(pointer.worldX, pointer.worldY)) {
+        if (this.touchMovePointerId !== null) return;
+        this.touchMovePointerId = pointer.id;
+        this.updateTouchMovement(pointer);
+        return;
+      }
+
+      if (this.touchAimPointerId !== null) return;
+      this.touchAimPointerId = pointer.id;
+      this.touchAimStart = { x: pointer.worldX, y: pointer.worldY };
+      this.touchAimDragged = false;
+      this.updateTouchAim(pointer);
     });
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.id === this.touchMovePointerId) this.updateTouchMovement(pointer);
+      if (pointer.id === this.touchAimPointerId) {
+        this.updateTouchAim(pointer);
+        if (Phaser.Math.Distance.Between(
+          this.touchAimStart.x,
+          this.touchAimStart.y,
+          pointer.worldX,
+          pointer.worldY,
+        ) > TOUCH_TAP_SLOP) {
+          this.touchAimDragged = true;
+        }
+      }
+    });
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => this.releaseTouch(pointer));
+    this.input.on('pointerupoutside', (pointer: Phaser.Input.Pointer) => this.releaseTouch(pointer));
+  }
+
+  private releaseTouch(pointer: Phaser.Input.Pointer): void {
+    if (pointer.id === this.touchMovePointerId) {
+      this.touchMovePointerId = null;
+      this.touchMove = { x: 0, y: 0 };
+      this.resetJoystick();
+    }
+    if (pointer.id === this.touchAimPointerId) {
+      this.updateTouchAim(pointer);
+      if (!this.touchAimDragged && !this.isPaused && !this.isGameOver && this.actor(this.localPlayerId)?.alive) {
+        this.shoot(this.currentAimAngle(), this.time.now);
+      }
+      this.touchAimPointerId = null;
+    }
+  }
+
+  private updateTouchMovement(pointer: Phaser.Input.Pointer): void {
+    const radius = 78;
+    const dx = pointer.worldX - JOYSTICK_CENTER_X;
+    const dy = pointer.worldY - JOYSTICK_CENTER_Y;
+    const distance = Math.hypot(dx, dy);
+    const scale = distance > radius ? radius / distance : 1;
+    this.touchMove = {
+      x: (dx * scale) / radius,
+      y: (dy * scale) / radius,
+    };
+    this.joystickBase?.setAlpha(0.44);
+    this.joystickThumb?.setAlpha(0.62);
+    this.joystickThumb?.setPosition(dx * scale, dy * scale);
+  }
+
+  private resetJoystick(): void {
+    this.joystickBase?.setAlpha(0.78);
+    this.joystickThumb?.setAlpha(0.92);
+    this.joystickThumb?.setPosition(0, 0);
+  }
+
+  private updateMobileControlState(time: number): void {
+    this.mobileActionAvailability.flare?.(this.flares.canFire(time), this.flares.chargeProgress(time));
+    this.mobileActionAvailability.interact?.(this.supplies.canInteract());
+  }
+
+  private updateTouchAim(pointer: Phaser.Input.Pointer): void {
+    this.touchAim = { x: pointer.worldX, y: pointer.worldY };
+  }
+
+  private isJoystickPoint(x: number, y: number): boolean {
+    return Phaser.Math.Distance.Between(x, y, JOYSTICK_CENTER_X, JOYSTICK_CENTER_Y)
+      <= JOYSTICK_INTERACTION_RADIUS;
+  }
+
+  private isTouchActionPoint(x: number, y: number): boolean {
+    return Object.values(this.mobileActionPositions).some((position) =>
+      Phaser.Math.Distance.Between(x, y, position.x, position.y) <= position.hitRadius);
+  }
+
+  private currentAimAngle(): number {
+    const pointer = this.input.activePointer;
+    const aimX = this.touchEnabled ? this.touchAim.x : pointer.worldX;
+    const aimY = this.touchEnabled ? this.touchAim.y : pointer.worldY;
+    return Phaser.Math.Angle.Between(this.player.x, this.player.y, aimX, aimY);
   }
 
   togglePause() {
@@ -2719,6 +3034,8 @@ export class ArenaScene extends Phaser.Scene {
     this.pauseMenu.setVisible(this.isPaused);
     this.crosshair.setVisible(!this.isPaused);
     if (this.isDuo) this.duoOptions?.session.sendPause(this.isPaused);
+    this.mobileControls?.setVisible(!this.isPaused);
+    this.mobilePauseControl?.setVisible(!this.isPaused && !this.isGameOver);
 
     if (this.isPaused) {
       this.pausedAt = this.time.now;
@@ -2899,7 +3216,9 @@ export class ArenaScene extends Phaser.Scene {
 
   update(time) {
     const pointer = this.input.activePointer;
-    this.crosshair.setPosition(Math.round(pointer.worldX), Math.round(pointer.worldY));
+    const aimX = this.touchEnabled ? this.touchAim.x : pointer.worldX;
+    const aimY = this.touchEnabled ? this.touchAim.y : pointer.worldY;
+    this.crosshair.setPosition(Math.round(aimX), Math.round(aimY));
 
     if (import.meta.env.DEV && Phaser.Input.Keyboard.JustDown(this.keys.debug!)) {
       const enabled = !this.physics.world.drawDebug;
@@ -2944,20 +3263,24 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     const localActor = this.actor(this.localPlayerId)!;
-    const horizontal = Number(this.keys.right.isDown || this.keys.rightAlt.isDown)
+    const keyboardHorizontal = Number(this.keys.right.isDown || this.keys.rightAlt.isDown)
       - Number(this.keys.left.isDown || this.keys.leftAlt.isDown);
-    const vertical = Number(this.keys.down.isDown || this.keys.downAlt.isDown)
+    const keyboardVertical = Number(this.keys.down.isDown || this.keys.downAlt.isDown)
       - Number(this.keys.up.isDown || this.keys.upAlt.isDown);
-    const aim = Phaser.Math.Angle.Between(this.player.x, this.player.y, pointer.worldX, pointer.worldY);
+    const horizontal = this.touchMovePointerId === null ? keyboardHorizontal : this.touchMove.x;
+    const vertical = this.touchMovePointerId === null ? keyboardVertical : this.touchMove.y;
+    const aim = Phaser.Math.Angle.Between(this.player.x, this.player.y, aimX, aimY);
     this.updateActorMotion(localActor, { moveX: horizontal, moveY: vertical, aim }, time);
     this.health = localActor.health;
     this.supplies.update(time);
     this.flares.update(time, aim);
+    this.updateMobileControlState(time);
     this.updateStatusEffects(time);
     this.updateRemoteActor(time);
     this.playerActors.forEach((actor) => this.updateActorDisplay(actor));
 
-    if (localActor.alive && pointer.isDown && time - this.lastShot >= this.supplies.fireInterval(time)) {
+    if (localActor.alive && !this.touchEnabled && pointer.isDown
+      && time - this.lastShot >= this.supplies.fireInterval(time, localActor.sprite)) {
       this.lastShot = time;
       this.shootForActor(localActor, aim, time);
     }
@@ -4959,6 +5282,8 @@ export class ArenaScene extends Phaser.Scene {
   gameOver(message?: string) {
     if (this.isGameOver) return;
     this.isGameOver = true;
+    this.mobileControls?.setVisible(false);
+    this.mobilePauseControl?.setVisible(false);
     const survivalMs = this.getSurvivalMs();
     const disconnection = message?.startsWith('CONNECTION LOST') ?? false;
     window.dispatchEvent(new CustomEvent('last-light:game-over', {
