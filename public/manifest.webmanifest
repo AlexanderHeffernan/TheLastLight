@@ -1,0 +1,19 @@
+{
+  "name": "The Last Light",
+  "short_name": "Last Light",
+  "description": "A pixel-art survival shooter.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "background_color": "#070807",
+  "theme_color": "#070807",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "64x64",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
