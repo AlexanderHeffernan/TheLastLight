@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM --platform=$BUILDPLATFORM node:20-alpine AS build
 
 WORKDIR /app
 
@@ -14,6 +14,18 @@ COPY --chown=node:node public ./public
 
 RUN npm ci && npm run build && npm prune --omit=dev
 RUN mkdir -p /data && chown node:node /data
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+ARG BUILD_TIMESTAMP
+ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+
+COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /data /data
 
 ENV NODE_ENV=production
 ENV DATA_DIR=/data
