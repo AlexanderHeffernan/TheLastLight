@@ -1052,7 +1052,10 @@ button { border-radius: 0; }
 
   .home-credits {
     display: grid;
-    gap: 8px;
+    width: max-content;
+    gap: 6px;
+    grid-template-columns: repeat(5, 44px);
+    align-items: start;
     top: calc(17px + env(safe-area-inset-top));
     right: calc(18px + env(safe-area-inset-right));
     bottom: auto;
@@ -1077,7 +1080,11 @@ button { border-radius: 0; }
     clip: rect(0 0 0 0);
     white-space: nowrap;
   }
-  .home-credits .contributor { display: none; }
+  .home-credits .contributor {
+    display: block;
+    width: 44px;
+    height: 44px;
+  }
 
   .modal {
     padding: calc(12px + env(safe-area-inset-top))
@@ -1105,6 +1112,8 @@ button { border-radius: 0; }
 }
 
 @media (max-width: 720px) and (orientation: portrait) {
+  .home-credits { justify-self: center; }
+
   .orientation-notice {
     position: fixed;
     z-index: 100;
@@ -1153,13 +1162,45 @@ button { border-radius: 0; }
 }
 
 @media (max-height: 520px) and (orientation: landscape) {
-  .home-title { top: 2vh; left: 24px; width: 42vw; height: 28vh; }
+  .home-title { top: 2vh; right: 24px; left: auto; width: 42vw; height: 28vh; }
   .home-panel { left: 24px; bottom: 48px; width: min(360px, 44vw); gap: 7px; }
   .home-panel #callsign { height: 40px; }
   .menu-button-primary { min-height: 54px; }
   .menu-button-primary span { font-size: 24px; }
   .home-status { bottom: 9px; left: 24px; }
-  .home-credits { right: 18px; bottom: 9px; }
+  .home-credits {
+    right: 18px;
+    bottom: 9px;
+    display: grid;
+    width: max-content;
+    gap: 6px;
+    grid-template-columns: repeat(5, 44px);
+    align-items: start;
+  }
+  .home-credits .credit-link {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    place-items: center;
+    gap: 0;
+    padding: 7px;
+    line-height: 0;
+  }
+  .home-credits .credit-link svg { width: 23px; height: 23px; }
+  .home-credits .credit-link-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .home-credits .contributor {
+    display: block;
+    width: 44px;
+    height: 44px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
