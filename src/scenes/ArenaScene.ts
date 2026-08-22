@@ -193,6 +193,7 @@ export class ArenaScene extends Phaser.Scene {
   private barrelDropEvent?: Phaser.Time.TimerEvent;
   private barrelSlots: BarrelSlot[] = [];
   private bossHazards: BossHazard[] = [];
+  private readonly shadowGraphicBounds = new Map<string, { width: number; height: number }>();
   private readonly touchEnabled = hasTouchControls();
   private readonly mobileControlScheme: MobileControlScheme = getMobileControlScheme();
   private touchMovePointerId: number | null = null;
@@ -1956,16 +1957,15 @@ export class ArenaScene extends Phaser.Scene {
       const amount = Phaser.Math.Clamp((value - start) / (end - start), 0, 1);
       return amount * amount * (3 - 2 * amount);
     };
-    for (let pixelY = 0; pixelY < 64; pixelY += 1) {
-      for (let pixelX = 0; pixelX < 192; pixelX += 1) {
-        const progress = pixelX / 191;
-        const halfWidth = 10 + progress * 15;
-        const edgeDistance = Math.abs(pixelY - 31.5) / halfWidth;
-        const edgeFade = Math.exp(-Math.pow(edgeDistance * 1.65, 2));
-        const lengthFade = Math.pow(1 - progress, 1.05);
-        const startRound = smoothstep(0, 0.055, progress);
-        const alpha = Math.round(190 * edgeFade * lengthFade * startRound);
-        const offset = (pixelY * 192 + pixelX) * 4;
+    for (let y = 0; y < 64; y += 1) {
+      for (let x = 0; x < 192; x += 1) {
+        const progress = x / 191;
+        const halfWidth = 29 + progress * 3;
+        const edgeDistance = Math.abs(y - 31.5) / halfWidth;
+        const edgeFade = Math.exp(-Math.pow(edgeDistance * 1.35, 2));
+        const lengthFade = 1 - smoothstep(0.34, 1, progress);
+        const alpha = Math.round(255 * edgeFade * lengthFade);
+        const offset = (y * 192 + x) * 4;
         projectedPixels.data[offset + 3] = alpha;
       }
     }
@@ -2100,6 +2100,7 @@ export class ArenaScene extends Phaser.Scene {
     const shadow = this.add.image(position.x + 2, position.y + 3, 'soft-shadow')
       .setDisplaySize(36, 18)
       .setAlpha(0.72)
+      .setVisible(false)
       .setDepth(1);
     const glow = this.add.image(position.x, position.y, 'glow')
       .setScale(0.85)
@@ -2167,7 +2168,8 @@ export class ArenaScene extends Phaser.Scene {
       .setDepth(1)
       .setRotation(rotation)
       .setTintFill(0x000000)
-      .setAlpha(alpha);
+      .setAlpha(alpha)
+      .setVisible(false);
 
     const addSolid = (x, y, key, width, height, rotation = 0, health = 0) => {
       const prop = this.solidProps.create(x, y, key).setDepth(2).setRotation(rotation);
@@ -2286,7 +2288,8 @@ export class ArenaScene extends Phaser.Scene {
       .setDepth(1)
       .setRotation(rotation)
       .setTintFill(0x000000)
-      .setAlpha(0.3);
+      .setAlpha(0.3)
+      .setVisible(false);
     barrel.setData({
       networkId: `barrel-${slotIndex}`,
       kind: 'barrel',
@@ -2466,7 +2469,8 @@ export class ArenaScene extends Phaser.Scene {
           .setDepth(1)
           .setRotation(prop.rotation)
           .setTintFill(0x000000)
-          .setAlpha(0.25));
+          .setAlpha(0.25)
+          .setVisible(false));
       }
       this.time.delayedCall(180, () => prop.active && prop.clearTint());
     });
@@ -2732,7 +2736,6 @@ export class ArenaScene extends Phaser.Scene {
     ]).setDepth(60).setVisible(false);
 
     if (this.touchEnabled) this.makeTouchInterface();
-    this.setGameCursorHidden(true);
   }
 
   private makeTouchInterface(): void {
@@ -3169,8 +3172,10 @@ export class ArenaScene extends Phaser.Scene {
     return Phaser.Math.Angle.Between(this.player.x, this.player.y, aimX, aimY);
   }
 
-  private setGameCursorHidden(hidden: boolean): void {
-    if (this.game.canvas) this.game.canvas.style.cursor = hidden ? 'none' : 'default';
+  private currentDesktopAimDistance(): number | undefined {
+    if (this.touchEnabled) return undefined;
+    const pointer = this.input.activePointer;
+    return Phaser.Math.Distance.Between(this.player.x, this.player.y, pointer.worldX, pointer.worldY);
   }
 
   private findAimLaserEndpoint(angle: number, length: number): TouchVector {
@@ -3227,7 +3232,6 @@ export class ArenaScene extends Phaser.Scene {
     this.crosshair.setVisible(!this.isPaused);
     if (this.isDuo) this.duoOptions?.session.sendPause(this.isPaused);
     this.aimLaser.setVisible(!this.isPaused);
-    this.setGameCursorHidden(!this.isPaused);
     this.mobileControls?.setVisible(!this.isPaused);
     this.mobilePauseControl?.setVisible(!this.isPaused && !this.isGameOver);
 
@@ -4643,18 +4647,60 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  private getShadowGraphicBounds(textureKey: string, frame: Phaser.Textures.Frame): { width: number; height: number } {
+    const cacheKey = `${textureKey}:${frame.name}`;
+    const cached = this.shadowGraphicBounds.get(cacheKey);
+    if (cached) return cached;
+
+    const width = Math.max(1, frame.width);
+    const height = Math.max(1, frame.height);
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        if (this.textures.getPixelAlpha(x, y, textureKey, frame.name) <= 12) continue;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+
+    const bounds = maxX < 0
+      ? { width, height }
+      : { width: maxX - minX + 1, height: maxY - minY + 1 };
+    this.shadowGraphicBounds.set(cacheKey, bounds);
+    return bounds;
+  }
+
   private collectShadowCasters(): ShadowCaster[] {
     const casters: ShadowCaster[] = [];
     const addBody = (gameObject: Phaser.GameObjects.GameObject & {
       active: boolean;
+      x: number;
+      y: number;
+      displayWidth: number;
+      displayHeight: number;
+      texture: Phaser.Textures.Texture;
+      frame: Phaser.Textures.Frame;
+      rotation: number;
       body?: Phaser.Physics.Arcade.Body | Phaser.Physics.Arcade.StaticBody | null;
     }) => {
       const body = gameObject.body;
       if (!gameObject.active || !body?.enable) return;
+      const graphicBounds = this.getShadowGraphicBounds(gameObject.texture.key, gameObject.frame);
       casters.push({
-        x: body.center.x,
-        y: body.center.y,
-        radius: Math.max(6, body.halfWidth, body.halfHeight),
+        x: gameObject.x,
+        y: gameObject.y,
+        halfWidth: Math.max(3, gameObject.displayWidth * graphicBounds.width / gameObject.frame.width / 2),
+        halfHeight: Math.max(3, gameObject.displayHeight * graphicBounds.height / gameObject.frame.height / 2),
+        displayWidth: gameObject.displayWidth,
+        displayHeight: gameObject.displayHeight,
+        rotation: gameObject.rotation,
+        textureKey: gameObject.texture.key,
+        frameName: gameObject.frame.name,
       });
     };
 
@@ -4671,11 +4717,13 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private playerLightSources(): PlayerLight[] {
+    const localBeamLength = this.currentDesktopAimDistance();
     return [...this.playerActors.values()].map((actor) => ({
       x: actor.sprite.x,
       y: actor.sprite.y,
       aimAngle: actor.aim,
       active: actor.alive && actor.health > 0,
+      beamLength: actor.id === this.localPlayerId ? localBeamLength : undefined,
     }));
   }
 
@@ -4995,7 +5043,8 @@ export class ArenaScene extends Phaser.Scene {
     const shadow = this.add.image(x + 3, y + 6, 'soft-shadow')
       .setDepth(1)
       .setDisplaySize(definition.shadowWidth, definition.shadowHeight)
-      .setAlpha(0);
+      .setAlpha(0)
+      .setVisible(false);
     const aura = this.add.image(x, y, 'glow')
       .setDepth(16)
       .setScale(kind === 'furnace' ? 0.98 : 0.72)
@@ -5104,7 +5153,8 @@ export class ArenaScene extends Phaser.Scene {
     const shadow = this.add.image(x + 2, y + (type.name === 'crawler' ? 10 : 3), 'soft-shadow')
       .setDepth(1)
       .setDisplaySize(type.shadowWidth * type.scale, type.shadowHeight * type.scale)
-      .setAlpha(0);
+      .setAlpha(0)
+      .setVisible(false);
     const aura = type.name === 'charred'
       ? this.add.image(x, y, 'glow')
         .setDepth(16)
@@ -5501,7 +5551,6 @@ export class ArenaScene extends Phaser.Scene {
     if (this.isGameOver) return;
     this.isGameOver = true;
     this.aimLaser.setVisible(false);
-    this.setGameCursorHidden(false);
     this.mobileControls?.setVisible(false);
     this.mobilePauseControl?.setVisible(false);
     const survivalMs = this.getSurvivalMs();
