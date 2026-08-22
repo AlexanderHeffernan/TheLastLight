@@ -1002,6 +1002,12 @@ button { border-radius: 0; }
   touch-action: none;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  html:not(.touch-controls-available) #game canvas {
+    cursor: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAGKADAAQAAAABAAAAGAAAAADiNXWtAAAA6klEQVRIDWNgGOqAEeaBu5dW/YexkWllvTC4GmRxGBuk787tmwwqquoMC/yqYcIMzQ9ug/UxwUTSs5thTJJpkOEgcFyWA0Mv3HUgl8yfupzhzetXDCKiYmCFIPaMdUfhajB0AwVq0gPBPkfWl5gdyQDzOQu6JkIGoqtvmbkexQEwC2Hq4EEEE6A2TXMLqO3gkW7eSm29/yBMSjiQFMlXvn4nxexRtSSGAKgsQs/mJBoBVg4yA7lkJimSybGQ5hZglKbIwURKcQ3yHUg9OkCxAFSOI4PuhonIXKxsdD3oivAGUWlDPrr6EcgHAInPTfAKzQGUAAAAAElFTkSuQmCC") 12 12, crosshair;
+  }
+}
+
 .scanlines,
 .vignette {
   position: absolute;
