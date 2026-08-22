@@ -10,6 +10,7 @@ export interface LeaderboardEntry {
   survivalMs: number;
   threat: number | null;
   achievedAt: number;
+  isCurrentPlayer: boolean;
 }
 
 export interface ChangelogEntry {
@@ -30,13 +31,22 @@ interface PendingScore {
 const PENDING_SCORES_KEY = 'the-last-light-pending-scores';
 let flushPromise: Promise<void> | undefined;
 
+class ApiRequestError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
+export class CallsignUnavailableError extends Error {}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...options,
     headers: { 'content-type': 'application/json', ...options?.headers },
   });
-  if (!response.ok) throw new Error(`Request failed (${response.status})`);
-  return response.json() as Promise<T>;
+  const body = await response.json() as T & { error?: string };
+  if (!response.ok) throw new ApiRequestError(response.status, body.error ?? `Request failed (${response.status})`);
+  return body;
 }
 
 export function getStatus(): Promise<GameStatus> {
@@ -47,23 +57,45 @@ export function recordPlay(): Promise<GameStatus> {
   return request('/api/plays', { method: 'POST', body: '{}' });
 }
 
+export async function claimPlayerName(name: string): Promise<string> {
+  try {
+    const response = await request<{ ok: true; name: string }>('/api/player', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    return response.name;
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 409) {
+      throw new CallsignUnavailableError(error.message);
+    }
+    throw error;
+  }
+}
+
 export async function getLeaderboard(): Promise<LeaderboardEntry[]> {
   const response = await request<{ entries: LeaderboardEntry[] }>('/api/leaderboard');
   return response.entries;
 }
 
-export function submitScore(
+export async function submitScore(
   name: string,
   score: number,
   survivalMs: number,
   threat?: number,
   submissionId: string = crypto.randomUUID(),
-): Promise<{ ok: true }> {
-  return request('/api/leaderboard', {
-    method: 'POST',
-    body: JSON.stringify({ name, score, survivalMs, threat, submissionId }),
-    keepalive: true,
-  });
+): Promise<{ ok: true; entry: LeaderboardEntry }> {
+  try {
+    return await request('/api/leaderboard', {
+      method: 'POST',
+      body: JSON.stringify({ name, score, survivalMs, threat, submissionId }),
+      keepalive: true,
+    });
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 409) {
+      throw new CallsignUnavailableError(error.message);
+    }
+    throw error;
+  }
 }
 
 export async function queueScore(name: string, score: number, survivalMs: number, threat: number): Promise<number | null> {
@@ -74,10 +106,10 @@ export async function queueScore(name: string, score: number, survivalMs: number
     writePendingScores(scores);
   } catch {
     await submitScore(name, score, survivalMs, threat, pending.submissionId);
-    return leaderboardRank(pending.submissionId);
+    return playerLeaderboardRank();
   }
   await flushPendingScores();
-  return leaderboardRank(pending.submissionId);
+  return playerLeaderboardRank();
 }
 
 export function flushPendingScores(): Promise<void> {
@@ -91,13 +123,12 @@ async function flushScores(): Promise<void> {
   while (true) {
     const score = readPendingScores()[0];
     if (!score) return;
-    await submitScore(score.name, score.score, score.survivalMs, score.threat, score.submissionId);
-    const scores = readPendingScores();
-    const submitted = scores.findIndex((entry) => sameScore(entry, score));
-    if (submitted >= 0) {
-      scores.splice(submitted, 1);
-      writePendingScores(scores);
+    try {
+      await submitScore(score.name, score.score, score.survivalMs, score.threat, score.submissionId);
+    } catch (error) {
+      if (!(error instanceof CallsignUnavailableError)) throw error;
     }
+    removePendingScore(score);
   }
 }
 
@@ -140,9 +171,17 @@ function sameScore(left: PendingScore, right: PendingScore): boolean {
   return left.submissionId === right.submissionId;
 }
 
-async function leaderboardRank(submissionId: string): Promise<number | null> {
+function removePendingScore(score: PendingScore): void {
+  const scores = readPendingScores();
+  const submitted = scores.findIndex((entry) => sameScore(entry, score));
+  if (submitted < 0) return;
+  scores.splice(submitted, 1);
+  writePendingScores(scores);
+}
+
+async function playerLeaderboardRank(): Promise<number | null> {
   const entries = await getLeaderboard();
-  const index = entries.findIndex((entry) => entry.id === submissionId);
+  const index = entries.findIndex((entry) => entry.isCurrentPlayer);
   return index < 0 ? null : index + 1;
 }
 

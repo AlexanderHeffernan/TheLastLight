@@ -1,4 +1,5 @@
 import { createReadStream } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
@@ -26,13 +27,31 @@ const server = createServer(async (request, response) => {
       if (!allow(request, 'plays', 30)) return json(response, { error: 'Too many requests' }, 429);
       return json(response, { playCount: gameStore.recordPlay(), lastUpdate: lastUpdateValue });
     }
+    if (request.method === 'POST' && url.pathname === '/api/player') {
+      const body = await readJson(request);
+      const claim = await gameStore.claimName(body.name, playerId(request, response));
+      if (claim.ok) return json(response, claim);
+      return json(response, { error: claim.message }, claim.reason === 'name-taken' ? 409 : 400);
+    }
     if (request.method === 'GET' && url.pathname === '/api/leaderboard') {
-      return json(response, { entries: gameStore.entries() });
+      return json(response, { entries: gameStore.entries(playerId(request, response)) });
     }
     if (request.method === 'POST' && url.pathname === '/api/leaderboard') {
       const body = await readJson(request);
-      const entry = await gameStore.submit(body.name, body.score, body.survivalMs, body.threat, body.submissionId);
-      return entry ? json(response, { ok: true, entry }) : json(response, { error: 'Invalid score' }, 400);
+      const result = await gameStore.submit(
+        playerId(request, response),
+        body.name,
+        body.score,
+        body.survivalMs,
+        body.threat,
+        body.submissionId,
+      );
+      if (result.ok) return json(response, result);
+      return json(
+        response,
+        { error: result.reason === 'name-taken' ? 'Callsign already in use.' : 'Invalid score.' },
+        result.reason === 'name-taken' ? 409 : 400,
+      );
     }
     if (request.method === 'GET' && url.pathname === '/api/changelog') {
       return json(response, changelog.current());
@@ -117,6 +136,24 @@ function allow(request: IncomingMessage, action: string, maximum: number): boole
   }
   current.count += 1;
   return current.count <= maximum;
+}
+
+function playerId(request: IncomingMessage, response: ServerResponse): string {
+  const stored = request.headers.cookie
+    ?.split(';')
+    .map((cookie) => cookie.trim().split('='))
+    .find(([name]) => name === 'last_light_player')?.[1];
+  if (stored && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(stored)) {
+    return stored;
+  }
+  const id = randomUUID();
+  const forwardedProtocol = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim();
+  const secure = forwardedProtocol === 'https' ? '; Secure' : '';
+  response.setHeader(
+    'set-cookie',
+    `last_light_player=${id}; Path=/; Max-Age=315360000; HttpOnly; SameSite=Lax${secure}`,
+  );
+  return id;
 }
 
 function resolveLastUpdate(): string {

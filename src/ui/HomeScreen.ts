@@ -1,4 +1,6 @@
 import {
+  CallsignUnavailableError,
+  claimPlayerName,
   flushPendingScores,
   getChangelog,
   getLeaderboard,
@@ -24,10 +26,11 @@ export class HomeScreen {
   private menuMusic?: HTMLAudioElement;
   private menuFadeFrame?: number;
   private menuUnlockHandler?: () => void;
+  private deploying = false;
 
   constructor(private readonly options: HomeScreenOptions) {
     this.callsign.value = localStorage.getItem(CALLSIGN_KEY) ?? '';
-    element<HTMLFormElement>('deploy-form').addEventListener('submit', (event) => this.deploy(event));
+    element<HTMLFormElement>('deploy-form').addEventListener('submit', (event) => void this.deploy(event));
     element('how-to-button').addEventListener('click', () => this.openModal('how-to-modal'));
     element('leaderboard-button').addEventListener('click', () => void this.openLeaderboard());
     element('changelog-button').addEventListener('click', () => void this.openChangelog());
@@ -53,16 +56,32 @@ export class HomeScreen {
     this.startMenuMusic();
   }
 
-  private deploy(event: SubmitEvent): void {
+  private async deploy(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    if (this.deploying) return;
     const result = validatePlayerName(this.callsign.value);
     if (!result.ok) {
       this.notice.textContent = result.reason.toUpperCase();
       this.callsign.focus();
       return;
     }
-    const callsign = result.name;
+    let callsign = result.name;
+    this.deploying = true;
+    this.notice.textContent = 'VERIFYING CALLSIGN...';
+    try {
+      callsign = await claimPlayerName(callsign);
+    } catch (error) {
+      if (error instanceof CallsignUnavailableError) {
+        this.notice.textContent = 'CALLSIGN ALREADY IN USE';
+        this.callsign.focus();
+        return;
+      }
+      // Preserve offline play. The score submission will establish the browser profile when connectivity returns.
+    } finally {
+      this.deploying = false;
+    }
     this.callsign.value = callsign;
+    this.notice.textContent = '';
     localStorage.setItem(CALLSIGN_KEY, callsign);
     this.fadeOutMenuMusic();
     this.options.onDeploy(callsign);
