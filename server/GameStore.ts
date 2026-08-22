@@ -91,11 +91,7 @@ export class GameStore {
     }
 
     const matchingName = this.data.leaderboard.find((entry) => sameName(entry.name, nameResult.name));
-    const currentEntry = this.data.leaderboard.find((entry) => entry.playerId === playerId);
     if (matchingName?.playerId && matchingName.playerId !== playerId) {
-      return { ok: false, reason: 'name-taken', message: 'Callsign already in use.' };
-    }
-    if (matchingName && currentEntry && matchingName !== currentEntry) {
       return { ok: false, reason: 'name-taken', message: 'Callsign already in use.' };
     }
 
@@ -105,9 +101,6 @@ export class GameStore {
         matchingName.playerId = playerId;
         await this.queueSave();
       }
-    } else if (currentEntry && currentEntry.name !== nameResult.name) {
-      currentEntry.name = nameResult.name;
-      await this.queueSave();
     }
 
     return { ok: true, name: nameResult.name };
@@ -152,7 +145,9 @@ export class GameStore {
       achievedAt: Date.now(),
       playerId,
     };
-    const previousBest = this.data.leaderboard.find((candidate) => candidate.playerId === playerId);
+    const previousBest = this.data.leaderboard.find((candidate) => (
+      candidate.playerId === playerId && sameName(candidate.name, claim.name)
+    ));
     if (previousBest && compareScores(entry, previousBest) >= 0) {
       return { ok: true, entry: publicEntry(previousBest) };
     }
@@ -233,12 +228,10 @@ function normalizeLeaderboardEntry(value: unknown): StoredLeaderboardEntry | nul
 
 function uniqueLeaderboardEntries(entries: StoredLeaderboardEntry[]): StoredLeaderboardEntry[] {
   const callsigns = new Set<string>();
-  const players = new Set<string>();
   return entries.filter((entry) => {
     const callsign = entry.name.toLowerCase();
-    if (callsigns.has(callsign) || (entry.playerId !== null && players.has(entry.playerId))) return false;
+    if (callsigns.has(callsign)) return false;
     callsigns.add(callsign);
-    if (entry.playerId !== null) players.add(entry.playerId);
     return true;
   });
 }

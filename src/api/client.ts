@@ -193,8 +193,7 @@ async function leaderboardResult(submissionId: string): Promise<LeaderboardResul
   const entries = await getLeaderboard();
   const submittedRank = entries.findIndex((entry) => entry.id === submissionId);
   if (submittedRank >= 0) return { rank: submittedRank + 1, newRecord: true };
-  const currentRank = entries.findIndex((entry) => entry.isCurrentPlayer);
-  return { rank: currentRank < 0 ? null : currentRank + 1, newRecord: false };
+  return { rank: null, newRecord: false };
 }
 
 export function getChangelog(): Promise<{ repository: string; entries: ChangelogEntry[] }> {

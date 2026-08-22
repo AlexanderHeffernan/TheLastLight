@@ -156,15 +156,13 @@ export class ArenaScene extends Phaser.Scene {
     if (runId !== this.runId || !this.isGameOver || !this.leaderboardResultText?.active) return;
     if (!available) {
       this.leaderboardResultText.setText('ARCHIVE OFFLINE  //  SCORE QUEUED').setColor('#a99c91');
-    } else if (rank === null) {
-      this.leaderboardResultText.setText('GLOBAL LEADERBOARD  //  OUTSIDE TOP 10').setColor('#a99c91');
     } else if (!newRecord) {
       this.leaderboardResultText
-        .setText(`NO NEW PERSONAL BEST  //  CURRENT RANK #${String(rank).padStart(2, '0')}`)
+        .setText('NO NEW PERSONAL BEST')
         .setColor('#a99c91');
     } else {
       this.leaderboardResultText
-        .setText(`GLOBAL LEADERBOARD SECURED  //  RANK #${String(rank).padStart(2, '0')}`)
+        .setText(`NEW PERSONAL BEST SECURED  //  RANK #${String(rank).padStart(2, '0')}`)
         .setColor('#f06a51');
     }
   };

@@ -126,7 +126,7 @@ See [`.env.example`](.env.example) for a local template.
 - Gameplay is a fixed-resolution 960×540 Phaser scene scaled to the available desktop viewport.
 - Darkness and light occlusion use cached render textures and bounded shadow-caster updates to preserve performance.
 - A deployment is counted when a gameplay run starts, including redeployments.
-- Leaderboard records rank by eliminations, then survival time, and retain one best run per anonymous browser profile. A long-lived first-party cookie identifies the profile; callsigns remain unique, and legacy records are claimed by the first matching profile to deploy. The public single-player client submits these records, so the leaderboard is intended for friendly competition rather than cheat-proof verification.
+- Leaderboard records rank by eliminations, then survival time, and retain one best run per anonymous browser profile and callsign pair. A long-lived first-party cookie identifies the profile; callsigns remain unique, and legacy records are claimed by the first matching profile to deploy. The public single-player client submits these records, so the leaderboard is intended for friendly competition rather than cheat-proof verification.
 - Persistent data is written through a serialized queue to a temporary file and atomically renamed.
 - GitHub Actions publishes both ARM64 and AMD64 images to GHCR on pushes to `main`.
 
