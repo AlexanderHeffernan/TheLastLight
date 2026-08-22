@@ -62,12 +62,14 @@ const JOYSTICK_BASE_RADIUS = 92;
 const JOYSTICK_RING_RADIUS = 65;
 const JOYSTICK_THUMB_RADIUS = 38;
 const JOYSTICK_MOVE_RADIUS = 78;
-const JOYSTICK_CENTER_X = JOYSTICK_BASE_RADIUS + MOBILE_CONTROL_PADDING;
-const JOYSTICK_CENTER_Y = HEIGHT - JOYSTICK_BASE_RADIUS - MOBILE_CONTROL_PADDING;
+const JOYSTICK_EDGE_PADDING = 28;
+const JOYSTICK_CENTER_X = JOYSTICK_BASE_RADIUS + JOYSTICK_EDGE_PADDING;
+const JOYSTICK_CENTER_Y = HEIGHT - JOYSTICK_BASE_RADIUS - JOYSTICK_EDGE_PADDING;
 const JOYSTICK_INTERACTION_RADIUS = 128;
 const AIM_JOYSTICK_CENTER_X = WIDTH - JOYSTICK_CENTER_X;
 const AIM_JOYSTICK_CENTER_Y = JOYSTICK_CENTER_Y;
 const AIM_JOYSTICK_INTERACTION_RADIUS = JOYSTICK_INTERACTION_RADIUS;
+const AIM_JOYSTICK_FIRE_DEAD_ZONE = JOYSTICK_RING_RADIUS;
 const MOBILE_ACTION_RADIUS = 40;
 const MOBILE_ACTION_HIT_RADIUS = 48;
 const MOBILE_PAUSE_RADIUS = 24;
@@ -201,6 +203,7 @@ export class ArenaScene extends Phaser.Scene {
   private touchAimVector: TouchVector = { x: 1, y: 0 };
   private touchAimStart: TouchVector = { x: 0, y: 0 };
   private touchAimDragged = false;
+  private touchAimFiring = false;
   private joystickBase?: Phaser.GameObjects.Graphics;
   private joystickThumb?: Phaser.GameObjects.Graphics;
   private aimJoystickBase?: Phaser.GameObjects.Graphics;
@@ -2613,7 +2616,7 @@ export class ArenaScene extends Phaser.Scene {
       this.isDuo
         ? this.touchEnabled
           ? this.mobileControlScheme === 'twin-stick'
-            ? 'LEFT STICK  MOVE  •  RIGHT STICK  AIM  •  OPEN AREA  SHOOT  •  TOP-RIGHT  PAUSE'
+            ? 'LEFT STICK  MOVE  •  RIGHT STICK  AIM / OUTER RING  FIRE  •  OPEN AREA  SHOOT  •  TOP-RIGHT  PAUSE'
             : 'LEFT STICK  MOVE  •  TAP  AIM + FIRE  •  DRAG  AIM  •  TOP-RIGHT  PAUSE'
           : 'WASD / ARROWS  MOVE  •  MOUSE  AIM + FIRE  •  F  FLARE  •  E  SUPPLY'
         : this.touchEnabled
@@ -2678,7 +2681,7 @@ export class ArenaScene extends Phaser.Scene {
     const pauseControls = this.add.text(WIDTH / 2, HEIGHT / 2 - 31,
       this.touchEnabled
         ? this.mobileControlScheme === 'twin-stick'
-          ? 'MOVE       LEFT STICK\nAIM        RIGHT STICK\nFIRE       ANY OPEN AREA\nFLARE      FLARE BUTTON\nINTERACT   OPEN BUTTON'
+          ? 'MOVE       LEFT STICK\nAIM        RIGHT STICK\nFIRE       AIM OUTER RING / OPEN AREA\nFLARE      FLARE BUTTON\nINTERACT   OPEN BUTTON'
           : 'MOVE       LEFT STICK\nAIM        DRAG RIGHT SIDE\nFIRE       TAP RIGHT SIDE\nFLARE      FLARE BUTTON\nINTERACT   OPEN BUTTON'
         : 'MOVE       WASD / ARROWS\nAIM        MOUSE\nFIRE       LEFT MOUSE\nFLARE      F\nINTERACT   E', {
         ...labelStyle,
@@ -3003,6 +3006,7 @@ export class ArenaScene extends Phaser.Scene {
         this.touchAimPointerId = pointer.id;
         this.touchAimStart = { x: pointer.worldX, y: pointer.worldY };
         this.touchAimDragged = false;
+        this.touchAimFiring = false;
         return;
       }
 
@@ -3015,6 +3019,7 @@ export class ArenaScene extends Phaser.Scene {
       this.touchAimPointerId = pointer.id;
       this.touchAimStart = { x: pointer.worldX, y: pointer.worldY };
       this.touchAimDragged = false;
+      this.touchAimFiring = false;
       this.updateTouchAim(pointer);
     });
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
@@ -3027,8 +3032,8 @@ export class ArenaScene extends Phaser.Scene {
           pointer.worldY,
         ) > TOUCH_TAP_SLOP;
         if (this.mobileControlScheme === 'twin-stick') {
-          if (dragged) {
-            this.touchAimDragged = true;
+          if (dragged || this.touchAimDragged) {
+            if (dragged) this.touchAimDragged = true;
             this.updateTouchAimMovement(pointer);
           }
         } else {
@@ -3062,6 +3067,7 @@ export class ArenaScene extends Phaser.Scene {
           this.updateTouchAimMovement(pointer);
         }
         this.touchAimPointerId = null;
+        this.touchAimFiring = false;
         this.resetAimJoystick();
       }
       if (this.mobileControlScheme !== 'twin-stick'
@@ -3109,6 +3115,7 @@ export class ArenaScene extends Phaser.Scene {
     if (distance > 8) {
       this.touchAimVector = { x: dx / distance, y: dy / distance };
     }
+    this.touchAimFiring = distance > AIM_JOYSTICK_FIRE_DEAD_ZONE;
     this.aimJoystickBase?.setAlpha(0.16);
     this.aimJoystickThumb?.setAlpha(0.26);
     this.aimJoystickThumb?.setPosition(dx * scale, dy * scale);
@@ -3118,6 +3125,7 @@ export class ArenaScene extends Phaser.Scene {
     this.aimJoystickBase?.setAlpha(0.28);
     this.aimJoystickThumb?.setAlpha(0.38);
     this.aimJoystickThumb?.setPosition(0, 0);
+    this.touchAimFiring = false;
   }
 
   private updateMobileControlState(time: number): void {
@@ -3490,7 +3498,7 @@ export class ArenaScene extends Phaser.Scene {
       this.shootForActor(localActor, aim, time);
     }
     if (this.touchEnabled && this.mobileControlScheme === 'twin-stick'
-      && this.touchFirePointerId !== null
+      && (this.touchFirePointerId !== null || this.touchAimFiring)
       && time - this.lastShot >= this.supplies.fireInterval(time)) {
       this.shoot(aim, time);
     }
