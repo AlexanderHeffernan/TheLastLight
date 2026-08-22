@@ -9,6 +9,11 @@ import {
   type LeaderboardEntry,
   type LeaderboardMode,
 } from '../api/client';
+import {
+  hasTouchControls,
+  loadMobileControlScheme,
+  setMobileControlScheme,
+} from '../config/controls';
 import lastNightAliveUrl from '../assets/audio/Last Night Alive.mp3';
 import lastNightAliveAlternateUrl from '../assets/audio/Last Night Alive-2.mp3';
 import { validatePlayerName } from '../shared/nameValidator';
@@ -48,6 +53,7 @@ export class HomeScreen {
   private readonly duoModal = element<HTMLElement>('duo-modal');
   private readonly skinModal = element<HTMLElement>('skin-modal');
   private readonly duoContent = element<HTMLElement>('duo-content');
+  private mobileControlScheme = loadMobileControlScheme();
   private menuMusic?: HTMLAudioElement;
   private menuFadeFrame?: number;
   private menuUnlockHandler?: () => void;
@@ -68,6 +74,7 @@ export class HomeScreen {
   private leaderboardMode: LeaderboardMode = 'solo';
 
   constructor(private readonly options: HomeScreenOptions) {
+    document.documentElement.classList.toggle('touch-controls-available', hasTouchControls());
     this.callsign.value = localStorage.getItem(CALLSIGN_KEY) ?? '';
     const savedSkinId = localStorage.getItem(SKIN_KEY);
     this.soloSkinId = savedSkinId
@@ -94,6 +101,14 @@ export class HomeScreen {
     window.addEventListener('pointermove', (event) => {
       this.updateSoloAimFromPointer(event);
       this.updateDuoAimFromPointer(event);
+    });
+    document.querySelectorAll<HTMLInputElement>('input[name="mobile-control-scheme"]').forEach((input) => {
+      input.checked = input.value === this.mobileControlScheme;
+      input.addEventListener('change', () => {
+        if (input.checked && (input.value === 'drag-aim' || input.value === 'twin-stick')) {
+          this.mobileControlScheme = input.value;
+        }
+      });
     });
     element('how-to-button').addEventListener('click', () => this.openModal('how-to-modal'));
     element('leaderboard-button').addEventListener('click', () => void this.openLeaderboard());
@@ -196,6 +211,7 @@ export class HomeScreen {
     this.renderSoloSkin(callsign);
     this.notice.textContent = '';
     localStorage.setItem(CALLSIGN_KEY, callsign);
+    setMobileControlScheme(this.mobileControlScheme);
     this.fadeOutMenuMusic();
     this.deploying = true;
     this.notice.textContent = 'PREPARING DEPLOYMENT...';
