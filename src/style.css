@@ -127,14 +127,6 @@ button { border-radius: 0; }
   gap: 12px;
 }
 
-.home-description {
-  margin: 0 0 2px;
-  color: #c9bdb0;
-  font-size: 13px;
-  line-height: 1.45;
-  text-shadow: 2px 2px #000;
-}
-
 .callsign-label {
   color: #b99589;
   font-size: 13px;
