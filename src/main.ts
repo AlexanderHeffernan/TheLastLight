@@ -28,11 +28,11 @@ window.addEventListener('last-light:game-over', (event) => {
     runId: string;
   }>).detail;
   void queueScore(callsign, result.score, result.survivalMs, result.threat)
-    .then((rank) => window.dispatchEvent(new CustomEvent('last-light:leaderboard-result', {
-      detail: { runId: result.runId, rank, available: true },
+    .then((leaderboard) => window.dispatchEvent(new CustomEvent('last-light:leaderboard-result', {
+      detail: { runId: result.runId, ...leaderboard, available: true },
     })))
     .catch(() => window.dispatchEvent(new CustomEvent('last-light:leaderboard-result', {
-      detail: { runId: result.runId, rank: null, available: false },
+      detail: { runId: result.runId, rank: null, newRecord: false, available: false },
     })));
 });
 

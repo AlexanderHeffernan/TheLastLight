@@ -13,6 +13,11 @@ export interface LeaderboardEntry {
   isCurrentPlayer: boolean;
 }
 
+export interface LeaderboardResult {
+  rank: number | null;
+  newRecord: boolean;
+}
+
 export interface ChangelogEntry {
   sha: string;
   message: string;
@@ -98,7 +103,12 @@ export async function submitScore(
   }
 }
 
-export async function queueScore(name: string, score: number, survivalMs: number, threat: number): Promise<number | null> {
+export async function queueScore(
+  name: string,
+  score: number,
+  survivalMs: number,
+  threat: number,
+): Promise<LeaderboardResult> {
   const pending = { submissionId: crypto.randomUUID(), name, score, survivalMs: Math.round(survivalMs), threat };
   try {
     const scores = readPendingScores();
@@ -106,10 +116,10 @@ export async function queueScore(name: string, score: number, survivalMs: number
     writePendingScores(scores);
   } catch {
     await submitScore(name, score, survivalMs, threat, pending.submissionId);
-    return playerLeaderboardRank();
+    return leaderboardResult(pending.submissionId);
   }
   await flushPendingScores();
-  return playerLeaderboardRank();
+  return leaderboardResult(pending.submissionId);
 }
 
 export function flushPendingScores(): Promise<void> {
@@ -179,10 +189,12 @@ function removePendingScore(score: PendingScore): void {
   writePendingScores(scores);
 }
 
-async function playerLeaderboardRank(): Promise<number | null> {
+async function leaderboardResult(submissionId: string): Promise<LeaderboardResult> {
   const entries = await getLeaderboard();
-  const index = entries.findIndex((entry) => entry.isCurrentPlayer);
-  return index < 0 ? null : index + 1;
+  const submittedRank = entries.findIndex((entry) => entry.id === submissionId);
+  if (submittedRank >= 0) return { rank: submittedRank + 1, newRecord: true };
+  const currentRank = entries.findIndex((entry) => entry.isCurrentPlayer);
+  return { rank: currentRank < 0 ? null : currentRank + 1, newRecord: false };
 }
 
 export function getChangelog(): Promise<{ repository: string; entries: ChangelogEntry[] }> {

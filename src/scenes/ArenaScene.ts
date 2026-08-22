@@ -147,9 +147,10 @@ export class ArenaScene extends Phaser.Scene {
   private wasAdrenalineActive = false;
 
   private readonly handleLeaderboardResult = (event: Event): void => {
-    const { runId, rank, available } = (event as CustomEvent<{
+    const { runId, rank, newRecord, available } = (event as CustomEvent<{
       runId: string;
       rank: number | null;
+      newRecord: boolean;
       available: boolean;
     }>).detail;
     if (runId !== this.runId || !this.isGameOver || !this.leaderboardResultText?.active) return;
@@ -157,6 +158,10 @@ export class ArenaScene extends Phaser.Scene {
       this.leaderboardResultText.setText('ARCHIVE OFFLINE  //  SCORE QUEUED').setColor('#a99c91');
     } else if (rank === null) {
       this.leaderboardResultText.setText('GLOBAL LEADERBOARD  //  OUTSIDE TOP 10').setColor('#a99c91');
+    } else if (!newRecord) {
+      this.leaderboardResultText
+        .setText(`NO NEW PERSONAL BEST  //  CURRENT RANK #${String(rank).padStart(2, '0')}`)
+        .setColor('#a99c91');
     } else {
       this.leaderboardResultText
         .setText(`GLOBAL LEADERBOARD SECURED  //  RANK #${String(rank).padStart(2, '0')}`)
