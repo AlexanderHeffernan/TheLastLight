@@ -1,14 +1,17 @@
-import Phaser from 'phaser';
+import type Phaser from 'phaser';
 import './style.css';
 import { flushPendingScores, queueScore, recordPlay } from './api/client';
-import { gameConfig } from './config/game';
 import { HomeScreen } from './ui/HomeScreen';
 
 let game: Phaser.Game | undefined;
 let callsign = 'SURVIVOR';
 
 const homeScreen = new HomeScreen({
-  onDeploy: (name) => {
+  onDeploy: async (name) => {
+    const [{ default: Phaser }, { gameConfig }] = await Promise.all([
+      import('phaser'),
+      import('./config/game'),
+    ]);
     callsign = name;
     document.querySelector('#home')?.classList.add('hidden');
     document.querySelector('#game-shell')?.classList.remove('hidden');

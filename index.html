@@ -4,9 +4,66 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#070807" />
-    <meta name="description" content="The Last Light — a pixel-art survival shooter." />
+    <meta name="description" content="Play The Last Light, a free pixel-art top-down survival shooter created by Alexander Heffernan. Hold a floodlit outpost against an endless horde." />
+    <meta name="author" content="Alexander Heffernan" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <link rel="canonical" href="https://thelastlight.alexheffernan.dev/" />
+    <link rel="author" href="https://github.com/AlexanderHeffernan" />
     <link rel="icon" type="image/png" href="/favicon.png" />
-    <title>The Last Light</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Changa+One:ital@0;1&family=Share+Tech+Mono&display=swap" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="The Last Light" />
+    <meta property="og:locale" content="en_GB" />
+    <meta property="og:title" content="The Last Light | Survival Game by Alexander Heffernan" />
+    <meta property="og:description" content="A free pixel-art top-down survival shooter. Hold a floodlit outpost against an endless horde." />
+    <meta property="og:url" content="https://thelastlight.alexheffernan.dev/" />
+    <meta property="og:image" content="https://thelastlight.alexheffernan.dev/menu/the_last_light_hero_1920x1080.png" />
+    <meta property="og:image:width" content="1920" />
+    <meta property="og:image:height" content="1080" />
+    <meta property="og:image:alt" content="A soldier holds a floodlit outpost against the dead in The Last Light" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="The Last Light | Survival Game by Alexander Heffernan" />
+    <meta name="twitter:description" content="A free pixel-art top-down survival shooter. Hold a floodlit outpost against an endless horde." />
+    <meta name="twitter:image" content="https://thelastlight.alexheffernan.dev/menu/the_last_light_hero_1920x1080.png" />
+    <meta name="twitter:image:alt" content="A soldier holds a floodlit outpost against the dead in The Last Light" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "VideoGame",
+        "@id": "https://thelastlight.alexheffernan.dev/#game",
+        "name": "The Last Light",
+        "url": "https://thelastlight.alexheffernan.dev/",
+        "description": "A free pixel-art top-down survival shooter about holding a floodlit outpost against an endless horde.",
+        "image": "https://thelastlight.alexheffernan.dev/menu/the_last_light_hero_1920x1080.png",
+        "genre": ["Survival", "Shooter", "Action"],
+        "gamePlatform": "Web browser",
+        "playMode": "SinglePlayer",
+        "applicationCategory": "Game",
+        "operatingSystem": "Any desktop operating system with a modern web browser",
+        "isAccessibleForFree": true,
+        "inLanguage": "en",
+        "author": {
+          "@type": "Person",
+          "@id": "https://thelastlight.alexheffernan.dev/#alexander-heffernan",
+          "name": "Alexander Heffernan",
+          "alternateName": "Alex Heffernan",
+          "url": "https://alexheffernan.dev/",
+          "sameAs": "https://github.com/AlexanderHeffernan"
+        },
+        "contributor": {
+          "@type": "Person",
+          "name": "Galen Green",
+          "sameAs": "https://github.com/galengreen"
+        },
+        "codeRepository": "https://github.com/AlexanderHeffernan/TheLastLight"
+      }
+    </script>
+    <title>The Last Light | Survival Game by Alexander Heffernan</title>
   </head>
   <body>
     <div id="mobile-notice" class="mobile-notice">
@@ -20,10 +77,11 @@
       <div class="home-shade" aria-hidden="true"></div>
       <header class="home-title">
         <img src="/menu/the_last_light_logo.png" alt="The Last Light" />
-        <span>THE LAST LIGHT</span>
+        <h1>THE LAST LIGHT</h1>
       </header>
 
       <form id="deploy-form" class="home-panel" autocomplete="off">
+        <p class="home-description">A free pixel-art top-down survival shooter created by Alexander Heffernan. Hold the floodlit outpost against an endless horde.</p>
         <label class="callsign-label" for="callsign">SURVIVOR CALLSIGN</label>
         <input id="callsign" name="callsign" maxlength="18" placeholder="ENTER CALLSIGN" autocomplete="off" spellcheck="false" required />
         <button id="play-button" class="menu-button menu-button-primary" type="submit">

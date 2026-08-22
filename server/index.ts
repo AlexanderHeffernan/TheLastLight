@@ -187,6 +187,8 @@ function mimeType(path: string): string {
     '.mp3': 'audio/mpeg',
     '.png': 'image/png',
     '.svg': 'image/svg+xml',
+    '.txt': 'text/plain; charset=utf-8',
     '.webp': 'image/webp',
+    '.xml': 'application/xml; charset=utf-8',
   } as Record<string, string>)[extname(path).toLowerCase()] ?? 'application/octet-stream';
 }

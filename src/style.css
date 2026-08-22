@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Changa+One:ital@0;1&family=Share+Tech+Mono&display=swap');
-
 :root {
   color: #e8dfcf;
   background: #070807;
@@ -105,9 +103,10 @@ button { border-radius: 0; }
   filter: drop-shadow(8px 10px 0 rgb(0 0 0 / 0.72));
 }
 
-.home-title span {
+.home-title h1 {
   grid-area: 1 / 1;
   align-self: center;
+  margin: 0;
   font-family: "Changa One", sans-serif;
   font-size: clamp(66px, 8vw, 144px);
   line-height: 0.78;
@@ -116,7 +115,7 @@ button { border-radius: 0; }
   text-shadow: 6px 6px 0 #160c0a, 10px 10px 0 #000;
 }
 
-.home-title img:not([src=""]) + span { opacity: 0; }
+.home-title img:not([src=""]) + h1 { opacity: 0; }
 
 .home-panel {
   position: absolute;
@@ -126,6 +125,14 @@ button { border-radius: 0; }
   width: min(390px, 38vw);
   display: grid;
   gap: 12px;
+}
+
+.home-description {
+  margin: 0 0 2px;
+  color: #c9bdb0;
+  font-size: 13px;
+  line-height: 1.45;
+  text-shadow: 2px 2px #000;
 }
 
 .callsign-label {

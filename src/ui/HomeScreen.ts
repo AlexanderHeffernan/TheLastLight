@@ -13,7 +13,7 @@ import lastNightAliveAlternateUrl from '../assets/audio/Last Night Alive-2.mp3';
 import { validatePlayerName } from '../shared/nameValidator';
 
 interface HomeScreenOptions {
-  onDeploy: (callsign: string) => void;
+  onDeploy: (callsign: string) => Promise<void>;
 }
 
 const CALLSIGN_KEY = 'the-last-light-callsign';
@@ -84,7 +84,16 @@ export class HomeScreen {
     this.notice.textContent = '';
     localStorage.setItem(CALLSIGN_KEY, callsign);
     this.fadeOutMenuMusic();
-    this.options.onDeploy(callsign);
+    this.deploying = true;
+    this.notice.textContent = 'PREPARING DEPLOYMENT...';
+    try {
+      await this.options.onDeploy(callsign);
+    } catch {
+      this.notice.textContent = 'DEPLOYMENT FAILED — TRY AGAIN';
+      this.startMenuMusic();
+    } finally {
+      this.deploying = false;
+    }
   }
 
   private startMenuMusic(): void {
