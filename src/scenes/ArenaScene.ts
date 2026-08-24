@@ -93,6 +93,7 @@ export class ArenaScene extends Phaser.Scene {
   private score = 0;
   private health = 100;
   private startedAt = 0;
+  private pausedAt = 0;
   private runId = '';
   private lastShot = 0;
   private lastHurt = -1000;
@@ -184,6 +185,7 @@ export class ArenaScene extends Phaser.Scene {
     this.score = 0;
     this.health = 100;
     this.startedAt = this.time.now;
+    this.pausedAt = 0;
     this.runId = crypto.randomUUID();
     this.lastShot = 0;
     this.lastHurt = -1000;
@@ -995,7 +997,7 @@ export class ArenaScene extends Phaser.Scene {
       window.dispatchEvent(new CustomEvent('last-light:game-over', {
         detail: {
           score: this.score,
-          survivalMs: this.time.now - this.startedAt,
+          survivalMs: this.getSurvivalMs(),
           threat: this.director.wave,
           runId: this.runId,
         },
@@ -1045,6 +1047,7 @@ export class ArenaScene extends Phaser.Scene {
     this.crosshair.setVisible(!this.isPaused);
 
     if (this.isPaused) {
+      this.pausedAt = this.time.now;
       this.player.setVelocity(0);
       this.physics.world.pause();
       this.time.paused = true;
@@ -1055,12 +1058,19 @@ export class ArenaScene extends Phaser.Scene {
       return;
     }
 
+    this.startedAt += this.time.now - this.pausedAt;
+    this.pausedAt = 0;
     this.physics.world.resume();
     this.time.paused = false;
     this.anims.resumeAll();
     this.tweens.resumeAll();
     this.sound.resumeAll?.();
     this.monsterAudio.setPaused(false);
+  }
+
+  private getSurvivalMs(): number {
+    const currentPauseMs = this.isPaused ? this.time.now - this.pausedAt : 0;
+    return this.time.now - this.startedAt - currentPauseMs;
   }
 
   spawnDust() {
@@ -3069,7 +3079,7 @@ export class ArenaScene extends Phaser.Scene {
 
   gameOver() {
     this.isGameOver = true;
-    const survivalMs = this.time.now - this.startedAt;
+    const survivalMs = this.getSurvivalMs();
     window.dispatchEvent(new CustomEvent('last-light:game-over', {
       detail: { score: this.score, survivalMs, threat: this.director.wave, runId: this.runId },
     }));
