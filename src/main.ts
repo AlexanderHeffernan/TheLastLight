@@ -32,10 +32,13 @@ function refreshGameViewport(): void {
   if (shell && viewport) {
     shell.style.setProperty('--visual-viewport-width', `${viewport.width}px`);
     shell.style.setProperty('--visual-viewport-height', `${viewport.height}px`);
-    shell.style.left = `${viewport.offsetLeft}px`;
-    shell.style.top = `${viewport.offsetTop}px`;
-    shell.style.width = `${viewport.width}px`;
-    shell.style.height = `${viewport.height}px`;
+    // CSS owns the shell geometry, including the rotated portrait fallback.
+    // Inline left/top/width/height values from a previous viewport can win
+    // over that layout while iOS is settling after an orientation change.
+    shell.style.removeProperty('left');
+    shell.style.removeProperty('top');
+    shell.style.removeProperty('width');
+    shell.style.removeProperty('height');
   }
   syncMobileOrientation();
   if (viewportRefreshFrame !== undefined) window.cancelAnimationFrame(viewportRefreshFrame);

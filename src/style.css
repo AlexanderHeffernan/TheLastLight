@@ -1242,15 +1242,40 @@ button { border-radius: 0; }
 }
 
 @media (max-height: 520px) and (orientation: landscape) {
-  .home-title { top: 2vh; right: 24px; left: auto; width: 42vw; height: 28vh; }
-  .home-panel { left: 24px; bottom: 48px; width: min(360px, 44vw); gap: 7px; }
-  .home-panel #callsign { height: 40px; }
-  .menu-button-primary { min-height: 54px; }
+  .home-title {
+    top: calc(2vh + env(safe-area-inset-top));
+    right: calc(24px + env(safe-area-inset-right));
+    left: auto;
+    width: 42vw;
+    height: 28vh;
+  }
+  .home-panel {
+    right: calc(24px + env(safe-area-inset-right));
+    bottom: calc(48px + env(safe-area-inset-bottom));
+    left: calc(24px + env(safe-area-inset-left));
+    width: min(360px, 44vw);
+    gap: 7px;
+  }
+  .home-panel #callsign { height: 48px; }
+  .menu-button-primary {
+    min-height: 64px;
+    height: 64px;
+  }
   .menu-button-primary span { font-size: 24px; }
-  .home-status { bottom: 9px; left: 24px; }
+  .duo-quick-actions .menu-button {
+    min-height: 64px;
+    height: 64px;
+  }
+  .home-status {
+    right: auto;
+    bottom: calc(9px + env(safe-area-inset-bottom));
+    left: calc(24px + env(safe-area-inset-left));
+    width: max-content;
+  }
   .home-credits {
-    right: 18px;
-    bottom: 9px;
+    top: auto;
+    right: calc(18px + env(safe-area-inset-right));
+    bottom: calc(9px + env(safe-area-inset-bottom));
     display: grid;
     width: max-content;
     gap: 6px;
