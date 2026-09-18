@@ -6,6 +6,7 @@ services:
     environment:
       PORT: "3000"
       DATA_DIR: "/data"
+      TRUST_PROXY: "${TRUST_PROXY:-false}"
       CHANGELOG_REPOSITORY: "AlexanderHeffernan/TheLastLight"
     ports:
       - "127.0.0.1:${HOST_PORT:-3011}:3000"

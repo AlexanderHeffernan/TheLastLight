@@ -19,6 +19,7 @@ The current release is a complete score-attack survival game. Runs are intention
 - Generator-fabricated flares and delayed supply drops containing health, adrenaline, or flare charges
 - Procedural monster vocals and combat audio with a rotating original soundtrack
 - Persistent global deployment count, leaderboard, and repository-driven changelog
+- Private two-player WebRTC sessions with host-authoritative simulation
 - Development-only collision visualization that is excluded from production builds
 
 ## Tech Stack
@@ -29,7 +30,7 @@ The current release is a complete score-attack survival game. Runs are intention
 - JSON file persistence with atomic writes
 - Docker, GHCR, and GitHub Actions for ARM64/AMD64 deployment
 
-The browser owns the single-player simulation. The server only serves the built client and stores aggregate deployments and submitted score records; there is no multiplayer session or authoritative game simulation.
+The browser owns the single-player simulation. In private duos, the host browser owns the authoritative simulation and sends snapshots and semantic events directly to the guest over peer-to-peer WebRTC. The server provides short-lived signaling, static hosting, and persistent aggregate and leaderboard records.
 
 ## Run Locally
 
@@ -92,7 +93,8 @@ docker compose down
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `3000` | Internal HTTP server port |
-| `DATA_DIR` | `/data` | Persistent score and deployment storage |
+| `DATA_DIR` | `/data` | Persistent scores, callsign claims, and private-room recovery state |
+| `TRUST_PROXY` | `false` | Trust `CF-Connecting-IP`/`X-Forwarded-For` only when the server is behind a trusted reverse proxy |
 | `CHANGELOG_REPOSITORY` | `AlexanderHeffernan/TheLastLight` | Repository queried for recent changes |
 | `GITHUB_TOKEN` | unset | Optional token for higher GitHub API limits |
 | `BUILD_TIMESTAMP` | startup time | Millisecond build time shown on the menu |
@@ -115,10 +117,10 @@ See [`.env.example`](.env.example) for a local template.
 - `src/scenes/` — Phaser scene lifecycle and combat coordination
 - `src/systems/` — lighting, audio, supplies, flares, and wave direction
 - `src/ui/` — landing screen, modal, and leaderboard behavior
+- `src/network/` — private-room WebRTC session, protocol, and launch state
 - `src/assets/` — runtime-ready game assets and typed load manifest
 - `server/` — static server, leaderboard persistence, and changelog API
 - `public/menu/` — landing-screen hero and title artwork
-- `art-source/` — editable deterministic pixel-art pipeline sources
 - `scripts/` — build-time metadata generation
 
 ## Architecture Notes
@@ -126,7 +128,8 @@ See [`.env.example`](.env.example) for a local template.
 - Gameplay is a fixed-resolution 960×540 Phaser scene scaled to the available desktop viewport.
 - Darkness and light occlusion use cached render textures and bounded shadow-caster updates to preserve performance.
 - A deployment is counted when a gameplay run starts, including redeployments.
-- Leaderboard records rank by eliminations, then survival time, and retain one best run per anonymous browser profile and callsign pair. A long-lived first-party cookie identifies the profile; callsigns remain unique, and legacy records are claimed by the first matching profile to deploy. The public single-player client submits these records, so the leaderboard is intended for friendly competition rather than cheat-proof verification.
+- Leaderboard records rank by eliminations, then survival time, and retain one best solo run per anonymous browser profile and one best duo run per normalized callsign pair. A long-lived first-party cookie claims callsigns across both modes, so a callsign first used in a duo is protected just like one first used in solo. The public client submits these records, so the leaderboard is intended for friendly competition rather than cheat-proof verification.
+- Duo gameplay remains direct browser-to-browser WebRTC; the server brokers signaling and reconnection offers but does not relay gameplay traffic. Networks that prohibit all direct peer paths require a separately configured relay service.
 - Persistent data is written through a serialized queue to a temporary file and atomically renamed.
 - GitHub Actions publishes both ARM64 and AMD64 images to GHCR on pushes to `main`.
 
