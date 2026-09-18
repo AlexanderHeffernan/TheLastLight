@@ -6,7 +6,7 @@ import type { LightingSystem } from './LightingSystem';
 interface FlareHooks {
   isGeneratorOnline: () => boolean;
   isGeneratorUnstable: () => boolean;
-  isPlayerAlive: () => boolean;
+  isPlayerAlive: (player: Phaser.Physics.Arcade.Sprite) => boolean;
   isGameOver: () => boolean;
   announce: (title: string, subtitle: string) => void;
   setGeneratorStatus: (status: string) => void;
@@ -82,7 +82,7 @@ export class FlareSystem {
       }
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.key) && this.hooks.isPlayerAlive()) this.fire(aimAngle, time);
+    if (Phaser.Input.Keyboard.JustDown(this.key) && this.hooks.isPlayerAlive(this.player)) this.fire(aimAngle, time);
     this.refreshHud();
   }
 
@@ -95,7 +95,8 @@ export class FlareSystem {
   }
 
   canFire(time: number): boolean {
-    return !this.hooks.isGameOver()
+    return this.hooks.isPlayerAlive(this.player)
+      && !this.hooks.isGameOver()
       && this.charges > 0
       && !this.launching
       && time >= this.activeUntil;
@@ -109,7 +110,7 @@ export class FlareSystem {
     return true;
   }
 
-  launch(angle: number, time: number, origin?: { x: number; y: number }): void {
+  launch(angle: number, time: number, origin?: Phaser.Physics.Arcade.Sprite): void {
     this.fire(angle, time, origin);
   }
 
@@ -241,8 +242,8 @@ export class FlareSystem {
     this.refreshHud();
   }
 
-  fire(angle: number, time: number, origin: { x: number; y: number } = this.player): void {
-    if (!this.hooks.isPlayerAlive()
+  fire(angle: number, time: number, origin: Phaser.Physics.Arcade.Sprite = this.player): void {
+    if (!this.hooks.isPlayerAlive(origin)
       || this.hooks.isGameOver()
       || this.charges <= 0
       || this.launching

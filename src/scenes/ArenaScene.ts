@@ -294,7 +294,13 @@ export class ArenaScene extends Phaser.Scene {
     if (detail.action === 'pause') {
       if (!this.isGameOver) this.togglePause();
     } else if (!this.isPaused && !this.isGameOver && detail.action === 'flare') {
-      this.flares.fire(this.currentAimAngle(), this.time.now);
+      const actor = this.actor(this.localPlayerId);
+      if (!actor?.alive) return;
+      if (this.isNetworkClient) {
+        if (actor.flareCharges > 0) this.pendingFlareInput = true;
+      } else {
+        this.flares.fire(this.currentAimAngle(), this.time.now);
+      }
     } else if (!this.isPaused && !this.isGameOver && detail.action === 'interact') {
       this.supplies.interact();
     }
@@ -522,7 +528,8 @@ export class ArenaScene extends Phaser.Scene {
     this.flares = new FlareSystem(this, this.player, this.lighting, this.audio, {
       isGeneratorOnline: () => !this.lighting.generatorDestroyed,
       isGeneratorUnstable: () => this.lighting.isGeneratorUnstable(),
-      isPlayerAlive: () => this.actor(this.localPlayerId)?.alive === true,
+      isPlayerAlive: (player) => [...this.playerActors.values()]
+        .some((actor) => actor.sprite === player && actor.alive && actor.health > 0),
       isGameOver: () => this.isGameOver,
       announce: (title, subtitle) => this.announce(title, subtitle),
       setGeneratorStatus: (status) => {
@@ -2825,9 +2832,13 @@ export class ArenaScene extends Phaser.Scene {
 
   private updateMobileControlState(time: number): void {
     if (!this.touchEnabled) return;
+    const actor = this.actor(this.localPlayerId);
+    const canFireFlare = actor?.alive === true && (this.isNetworkClient
+      ? actor.flareCharges > 0
+      : this.flares.canFire(time));
     window.dispatchEvent(new CustomEvent('last-light:mobile-availability', {
       detail: {
-        flare: this.flares.canFire(time),
+        flare: canFireFlare,
         interact: this.supplies.canInteract(),
       },
     }));
