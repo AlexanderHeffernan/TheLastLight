@@ -6,20 +6,26 @@ import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ChangelogStore } from './ChangelogStore.js';
 import { GameStore } from './GameStore.js';
+import { PrivateRoomStore } from './PrivateRoomStore.js';
 
 const port = Number(process.env.PORT || 3000);
 const clientDirectory = resolve(fileURLToPath(new URL('../client/', import.meta.url)));
 const dataDirectory = process.env.DATA_DIR || '/data';
 const gameStore = new GameStore(resolve(dataDirectory, 'game-data.json'));
 const changelog = new ChangelogStore(new URL('../client/changelog.json', import.meta.url));
+const privateRooms = new PrivateRoomStore(resolve(dataDirectory, 'private-rooms.json'));
 const limits = new Map<string, { count: number; resetsAt: number }>();
 const lastUpdateValue = resolveLastUpdate();
+const MAX_JSON_BODY_BYTES = 256 * 1024;
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const MAX_RATE_LIMIT_ENTRIES = 10_000;
 
-await Promise.all([gameStore.load(), changelog.load()]);
+await Promise.all([gameStore.load(), changelog.load(), privateRooms.load()]);
 
 const server = createServer(async (request, response) => {
   try {
-    const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+    const url = new URL(request.url ?? '/', 'http://localhost');
     if (request.method === 'GET' && url.pathname === '/api/status') {
       return json(response, { ...gameStore.status(), lastUpdate: lastUpdateValue });
     }
@@ -27,17 +33,156 @@ const server = createServer(async (request, response) => {
       if (!allow(request, 'plays', 30)) return json(response, { error: 'Too many requests' }, 429);
       return json(response, { playCount: gameStore.recordPlay(), lastUpdate: lastUpdateValue });
     }
+    if (request.method === 'POST' && url.pathname === '/api/private-rooms') {
+      if (!allow(request, 'private-room-create', 12)) return json(response, { error: 'Too many requests' }, 429);
+      const body = await readJson(request);
+      const hostPlayerId = playerId(request, response);
+      const claim = await gameStore.claimName(body.callsign, hostPlayerId);
+      if (!claim.ok) return json(response, { error: claim.message }, nameClaimStatus(claim.reason));
+      const room = privateRooms.create(hostPlayerId, claim.name);
+      return room.ok ? json(response, room.value) : json(response, { error: room.message }, room.status);
+    }
+    const offerPath = /^\/api\/private-rooms\/([^/]+)\/offers$/.exec(url.pathname);
+    if (offerPath && request.method === 'POST') {
+      if (!allow(request, 'private-room-offer', 12)) return json(response, { error: 'Too many requests' }, 429);
+      const body = await readJson(request);
+      const guestPlayerId = playerId(request, response);
+      const claim = await gameStore.claimName(body.callsign, guestPlayerId);
+      if (!claim.ok) return json(response, { error: claim.message }, nameClaimStatus(claim.reason));
+      const result = privateRooms.addOffer(
+        decodeURIComponent(offerPath[1]),
+        body.peerId,
+        guestPlayerId,
+        claim.name,
+        body.offer,
+      );
+      if (result.ok) return json(response, { ok: true });
+      return json(response, { error: result.message }, result.status);
+    }
+    if (offerPath && request.method === 'GET') {
+      if (!allow(request, 'private-room-offer-poll', 240)) return json(response, { error: 'Too many requests' }, 429);
+      const result = privateRooms.listOffers(decodeURIComponent(offerPath[1]), hostToken(request));
+      if (result.ok) return json(response, { offers: result.value });
+      return json(response, { error: result.message }, result.status);
+    }
+    const answerPath = /^\/api\/private-rooms\/([^/]+)\/answers$/.exec(url.pathname);
+    if (answerPath && request.method === 'POST') {
+      if (!allow(request, 'private-room-answer', 24)) return json(response, { error: 'Too many requests' }, 429);
+      const body = await readJson(request);
+      const result = privateRooms.addAnswer(
+        decodeURIComponent(answerPath[1]),
+        hostToken(request),
+        body.peerId,
+        body.answer,
+        body.error,
+      );
+      if (result.ok) return json(response, { ok: true });
+      return json(response, { error: result.message }, result.status);
+    }
+    const answerForPeerPath = /^\/api\/private-rooms\/([^/]+)\/answers\/([^/]+)$/.exec(url.pathname);
+    if (answerForPeerPath && request.method === 'GET') {
+      if (!allow(request, 'private-room-answer-poll', 240)) return json(response, { error: 'Too many requests' }, 429);
+      const result = privateRooms.getAnswer(
+        decodeURIComponent(answerForPeerPath[1]),
+        decodeURIComponent(answerForPeerPath[2]),
+      );
+      if (result.ok) return json(response, result.value ?? {});
+      return json(response, { error: result.message }, result.status);
+    }
+    const guestResetPath = /^\/api\/private-rooms\/([^/]+)\/guest$/.exec(url.pathname);
+    if (guestResetPath && request.method === 'POST') {
+      if (!allow(request, 'private-room-kick', 24)) return json(response, { error: 'Too many requests' }, 429);
+      await readJson(request);
+      const result = privateRooms.resetGuest(decodeURIComponent(guestResetPath[1]), hostToken(request));
+      if (result.ok) return json(response, { ok: true });
+      return json(response, { error: result.message }, result.status);
+    }
+    const restartOfferPath = /^\/api\/private-rooms\/([^/]+)\/restart-offer$/.exec(url.pathname);
+    if (restartOfferPath && request.method === 'POST') {
+      if (!allow(request, 'private-room-restart-offer', 12)) return json(response, { error: 'Too many requests' }, 429);
+      const body = await readJson(request);
+      const result = privateRooms.addRestartOffer(
+        decodeURIComponent(restartOfferPath[1]), body.peerId, body.generation, body.description,
+      );
+      if (result.ok) return json(response, { ok: true });
+      return json(response, { error: result.message }, result.status);
+    }
+    if (restartOfferPath && request.method === 'GET') {
+      if (!allow(request, 'private-room-restart-poll', 240)) return json(response, { error: 'Too many requests' }, 429);
+      const result = privateRooms.getRestartOffer(
+        decodeURIComponent(restartOfferPath[1]), hostToken(request),
+      );
+      if (result.ok) return json(response, result.value ?? {});
+      return json(response, { error: result.message }, result.status);
+    }
+    const restartAnswerPath = /^\/api\/private-rooms\/([^/]+)\/restart-answer$/.exec(url.pathname);
+    if (restartAnswerPath && request.method === 'POST') {
+      if (!allow(request, 'private-room-restart-answer', 12)) return json(response, { error: 'Too many requests' }, 429);
+      const body = await readJson(request);
+      const result = privateRooms.addRestartAnswer(
+        decodeURIComponent(restartAnswerPath[1]), hostToken(request), body.peerId,
+        body.generation, body.description,
+      );
+      if (result.ok) return json(response, { ok: true });
+      return json(response, { error: result.message }, result.status);
+    }
+    if (restartAnswerPath && request.method === 'GET') {
+      if (!allow(request, 'private-room-restart-answer-poll', 240)) return json(response, { error: 'Too many requests' }, 429);
+      const result = privateRooms.getRestartAnswer(
+        decodeURIComponent(restartAnswerPath[1]),
+        url.searchParams.get('peerId'),
+        Number(url.searchParams.get('generation')),
+      );
+      if (result.ok) return json(response, result.value ?? {});
+      return json(response, { error: result.message }, result.status);
+    }
+    const roomResultPath = /^\/api\/private-rooms\/([^/]+)\/result$/.exec(url.pathname);
+    if (roomResultPath && request.method === 'POST') {
+      if (!allow(request, 'private-room-result', 12)) return json(response, { error: 'Too many requests' }, 429);
+      const body = await readJson(request);
+      const result = privateRooms.setLeaderboardResult(
+        decodeURIComponent(roomResultPath[1]), hostToken(request), body.result,
+      );
+      if (result.ok) return json(response, { ok: true });
+      return json(response, { error: result.message }, result.status);
+    }
+    if (roomResultPath && request.method === 'GET') {
+      if (!allow(request, 'private-room-result-poll', 60)) return json(response, { error: 'Too many requests' }, 429);
+      const result = privateRooms.getLeaderboardResult(
+        decodeURIComponent(roomResultPath[1]), url.searchParams.get('peerId'),
+      );
+      if (result.ok) return json(response, { result: result.value });
+      return json(response, { error: result.message }, result.status);
+    }
     if (request.method === 'POST' && url.pathname === '/api/player') {
+      if (!allow(request, 'player-claim', 12)) return json(response, { error: 'Too many requests' }, 429);
       const body = await readJson(request);
       const claim = await gameStore.claimName(body.name, playerId(request, response));
       if (claim.ok) return json(response, claim);
-      return json(response, { error: claim.message }, claim.reason === 'name-taken' ? 409 : 400);
+      return json(response, { error: claim.message }, nameClaimStatus(claim.reason));
     }
     if (request.method === 'GET' && url.pathname === '/api/leaderboard') {
-      return json(response, { entries: gameStore.entries(playerId(request, response)) });
+      if (!allow(request, 'leaderboard-read', 60)) return json(response, { error: 'Too many requests' }, 429);
+      const mode = url.searchParams.get('mode') === 'duos' ? 'duos' : 'solo';
+      return json(response, { entries: gameStore.entries(playerId(request, response), mode) });
     }
     if (request.method === 'POST' && url.pathname === '/api/leaderboard') {
+      if (!allow(request, 'leaderboard-submit', 12)) return json(response, { error: 'Too many requests' }, 429);
       const body = await readJson(request);
+      if (body.mode === 'duos') {
+        const authorization = privateRooms.getLeaderboardAuthorization(
+          headerValue(request, 'x-duo-room-code') ?? '',
+          hostToken(request),
+        );
+        if (!authorization.ok) return json(response, { error: authorization.message }, authorization.status);
+        if (!gameStore.duoCallsignsOwned(
+          body.players,
+          authorization.value.hostPlayerId,
+          authorization.value.guestPlayerId,
+        )) {
+          return json(response, { error: 'Duo callsigns are not owned by both participants.' }, 403);
+        }
+      }
       const result = await gameStore.submit(
         playerId(request, response),
         body.name,
@@ -45,12 +190,20 @@ const server = createServer(async (request, response) => {
         body.survivalMs,
         body.threat,
         body.submissionId,
+        body.mode,
+        body.players,
       );
       if (result.ok) return json(response, result);
       return json(
         response,
-        { error: result.reason === 'name-taken' ? 'Callsign already in use.' : 'Invalid score.' },
-        result.reason === 'name-taken' ? 409 : 400,
+        {
+          error: result.reason === 'name-taken'
+            ? 'Callsign already in use.'
+            : result.reason === 'capacity'
+              ? 'The callsign registry is temporarily full.'
+              : 'Invalid score.',
+        },
+        result.reason === 'name-taken' ? 409 : result.reason === 'capacity' ? 503 : 400,
       );
     }
     if (request.method === 'GET' && url.pathname === '/api/changelog') {
@@ -59,8 +212,12 @@ const server = createServer(async (request, response) => {
     if (request.method !== 'GET' && request.method !== 'HEAD') return json(response, { error: 'Not found' }, 404);
     return await serveStatic(request, response, url.pathname);
   } catch (error) {
-    console.error(error);
-    if (!response.headersSent) json(response, { error: 'Internal server error' }, 500);
+    if (!(error instanceof HttpError)) console.error(error);
+    if (!response.headersSent) {
+      const status = error instanceof HttpError ? error.status : 500;
+      const message = error instanceof HttpError ? error.message : 'Internal server error';
+      json(response, { error: message }, status);
+    }
     else response.destroy();
   }
 });
@@ -69,10 +226,25 @@ server.listen(port, '0.0.0.0', () => {
   console.log(`The Last Light listening on 0.0.0.0:${port}`);
 });
 
-async function shutdown(): Promise<void> {
-  server.close();
-  await gameStore.flush();
-  process.exit(0);
+let shutdownPromise: Promise<void> | undefined;
+
+function shutdown(): Promise<void> {
+  shutdownPromise ??= (async () => {
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      server.close(() => finish());
+      const timeout = setTimeout(finish, 5000);
+      timeout.unref();
+    });
+    await Promise.all([gameStore.flush(), privateRooms.flush()]);
+    process.exit(0);
+  })();
+  return shutdownPromise;
 }
 
 process.once('SIGTERM', () => void shutdown());
@@ -116,26 +288,62 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   let body = '';
   for await (const chunk of request) {
     body += chunk;
-    if (body.length > 8192) throw new Error('Request body too large');
+    if (Buffer.byteLength(body) > MAX_JSON_BODY_BYTES) throw new HttpError(413, 'Request body too large');
   }
-  const parsed = JSON.parse(body || '{}');
-  return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+  try {
+    const parsed = JSON.parse(body || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Expected an object');
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw new HttpError(400, 'Invalid JSON body');
+  }
+}
+
+class HttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
 }
 
 function allow(request: IncomingMessage, action: string, maximum: number): boolean {
-  const forwarded = request.headers['cf-connecting-ip'] || request.headers['x-forwarded-for'];
-  const address = String(Array.isArray(forwarded) ? forwarded[0] : forwarded ?? request.socket.remoteAddress ?? 'unknown')
-    .split(',')[0]
-    .trim();
+  const address = clientAddress(request);
   const key = `${address}:${action}`;
   const now = Date.now();
+  if (limits.size >= MAX_RATE_LIMIT_ENTRIES && !limits.has(key)) {
+    for (const [entryKey, entry] of limits) {
+      if (now >= entry.resetsAt) limits.delete(entryKey);
+    }
+    if (limits.size >= MAX_RATE_LIMIT_ENTRIES) return false;
+  }
   const current = limits.get(key);
   if (!current || now >= current.resetsAt) {
-    limits.set(key, { count: 1, resetsAt: now + 60000 });
+    limits.set(key, { count: 1, resetsAt: now + RATE_LIMIT_WINDOW_MS });
     return true;
   }
   current.count += 1;
   return current.count <= maximum;
+}
+
+function clientAddress(request: IncomingMessage): string {
+  if (TRUST_PROXY) {
+    const forwarded = request.headers['cf-connecting-ip'] || request.headers['x-forwarded-for'];
+    const value = String(Array.isArray(forwarded) ? forwarded[0] : forwarded ?? '').split(',')[0].trim();
+    if (value) return value;
+  }
+  return request.socket.remoteAddress ?? 'unknown';
+}
+
+function hostToken(request: IncomingMessage): string | undefined {
+  return headerValue(request, 'x-duo-host-token');
+}
+
+function headerValue(request: IncomingMessage, name: string): string | undefined {
+  const value = request.headers[name];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function nameClaimStatus(reason: 'invalid' | 'name-taken' | 'capacity'): number {
+  return reason === 'name-taken' ? 409 : reason === 'capacity' ? 503 : 400;
 }
 
 function playerId(request: IncomingMessage, response: ServerResponse): string {
@@ -147,7 +355,9 @@ function playerId(request: IncomingMessage, response: ServerResponse): string {
     return stored;
   }
   const id = randomUUID();
-  const forwardedProtocol = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim();
+  const forwardedProtocol = TRUST_PROXY
+    ? String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim()
+    : '';
   const secure = forwardedProtocol === 'https' ? '; Secure' : '';
   response.setHeader(
     'set-cookie',

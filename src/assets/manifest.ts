@@ -1,5 +1,18 @@
 import Phaser from 'phaser';
 import soldierUrl from './characters/soldier.png';
+import topdownSoldierSkinUrl from './characters/skins/topdown_soldier_64.png';
+import fieldMedicSkinUrl from './characters/skins/field_medic_64.png';
+import mechanicSkinUrl from './characters/skins/mechanic_64.png';
+import homesteaderSkinUrl from './characters/skins/homesteader_64.png';
+import apartmentSurvivorSkinUrl from './characters/skins/apartment_survivor_64.png';
+import hunterSkinUrl from './characters/skins/hunter_64.png';
+import urbanClimberSkinUrl from './characters/skins/urban_climber_64.png';
+import blockGuardianSkinUrl from './characters/skins/block_guardian_64.png';
+import courierSkinUrl from './characters/skins/courier_64.png';
+import alexanderHeffernanSkinUrl from './characters/skins/alexander_heffernan_64.png';
+import galenGreenSkinUrl from './characters/skins/galen_green_64.png';
+import caraLillSkinUrl from './characters/skins/cara_lill_64.png';
+import oliverHeffernanSkinUrl from './characters/skins/oliver_heffernan_64.png';
 import zombieUrl from './characters/zombie.png';
 import zombieRunnerUrl from './enemies/zombie_runner_64.png';
 import zombieBruteUrl from './enemies/zombie_brute_64.png';
@@ -70,6 +83,19 @@ export const DEFEAT_MUSIC_KEYS = defeatMusicTracks.map(([key]) => key);
 
 export function loadAssets(scene: Phaser.Scene): void {
   scene.load.image('soldier', soldierUrl);
+  scene.load.image('skin-topdown-soldier', topdownSoldierSkinUrl);
+  scene.load.image('skin-field-medic', fieldMedicSkinUrl);
+  scene.load.image('skin-mechanic', mechanicSkinUrl);
+  scene.load.image('skin-homesteader', homesteaderSkinUrl);
+  scene.load.image('skin-apartment-survivor', apartmentSurvivorSkinUrl);
+  scene.load.image('skin-hunter', hunterSkinUrl);
+  scene.load.image('skin-urban-climber', urbanClimberSkinUrl);
+  scene.load.image('skin-block-guardian', blockGuardianSkinUrl);
+  scene.load.image('skin-courier', courierSkinUrl);
+  scene.load.image('skin-alexander-heffernan', alexanderHeffernanSkinUrl);
+  scene.load.image('skin-galen-green', galenGreenSkinUrl);
+  scene.load.image('skin-cara-lill', caraLillSkinUrl);
+  scene.load.image('skin-oliver-heffernan', oliverHeffernanSkinUrl);
   scene.load.image('zombie', zombieUrl);
   scene.load.image('zombie-runner', zombieRunnerUrl);
   scene.load.image('zombie-brute', zombieBruteUrl);
