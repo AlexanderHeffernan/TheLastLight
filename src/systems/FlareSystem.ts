@@ -21,6 +21,8 @@ export class FlareSystem {
   private readonly rechargeDuration = 45000;
   private readonly firstChargeDuration = 38000;
   private readonly key: Phaser.Input.Keyboard.Key;
+  private readonly touchEnabled = typeof window !== 'undefined'
+    && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   private readonly inventoryText: Phaser.GameObjects.Text;
   private readonly chargeText: Phaser.GameObjects.Text;
   private charges = 0;
@@ -56,14 +58,14 @@ export class FlareSystem {
       fontSize: '14px',
       color: '#ff7663',
       padding: { x: 7, y: 4 },
-    }).setOrigin(1, 0).setDepth(30);
+    }).setOrigin(1, 0).setDepth(30).setVisible(!this.touchEnabled);
     this.chargeText = scene.add.text(GAME_WIDTH - 25, 43, '', {
       ...textStyle,
       fontSize: '11px',
       color: '#e6d7c4',
       lineSpacing: 2,
       padding: { x: 7, y: 4 },
-    }).setOrigin(1, 0).setDepth(30);
+    }).setOrigin(1, 0).setDepth(30).setVisible(!this.touchEnabled);
     this.refreshHud();
   }
 
@@ -90,6 +92,13 @@ export class FlareSystem {
 
   chargeCount(): number {
     return this.charges;
+  }
+
+  canFire(time: number): boolean {
+    return !this.hooks.isGameOver()
+      && this.charges > 0
+      && !this.launching
+      && time >= this.activeUntil;
   }
 
   addCharge(): boolean {
@@ -232,7 +241,7 @@ export class FlareSystem {
     this.refreshHud();
   }
 
-  private fire(angle: number, time: number, origin: { x: number; y: number } = this.player): void {
+  fire(angle: number, time: number, origin: { x: number; y: number } = this.player): void {
     if (!this.hooks.isPlayerAlive()
       || this.hooks.isGameOver()
       || this.charges <= 0
@@ -302,8 +311,8 @@ export class FlareSystem {
 
   private refreshHud(): void {
     const visible = this.unlocked || !!this.pendingCartridge;
-    this.inventoryText.setVisible(visible);
-    this.chargeText.setVisible(visible);
+    this.inventoryText.setVisible(!this.touchEnabled && visible);
+    this.chargeText.setVisible(!this.touchEnabled && visible);
     const inventoryLabel = `FLARE GUN  •  ${this.charges} / ${this.capacity}`;
     if (inventoryLabel !== this.lastInventoryLabel) {
       this.lastInventoryLabel = inventoryLabel;
@@ -341,7 +350,10 @@ export class FlareSystem {
         this.hooks.setGeneratorStatus(markerStatus);
       }
     } else {
-      this.lastGeneratorLabel = '';
+      if (this.lastGeneratorLabel !== productionStatus) {
+        this.lastGeneratorLabel = productionStatus;
+        this.hooks.setGeneratorStatus(productionStatus);
+      }
     }
   }
 }
