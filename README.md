@@ -53,7 +53,7 @@ Open [http://localhost:3000](http://localhost:3000).
 - **WASD / arrow keys** — move
 - **Mouse** — aim
 - **Left mouse** — fire
-- **Touch** — choose Drag Aim (tap or drag the right side) or Twin Stick (tap anywhere on the left to place the move stick, then tap anywhere on the right to place the aim stick and push beyond its centre ring to fire)
+- **Touch** — Twin Stick: tap anywhere on the left to place the move stick, then hold anywhere on the right to aim; push past the inner ring to fire, and release to stop firing
 - **Mobile action buttons** — use the flare and open buttons; pause from the top-right
 - **F** — fire an available aerial flare
 - **E** — open a landed supply cache
