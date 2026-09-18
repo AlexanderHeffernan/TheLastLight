@@ -218,6 +218,23 @@ button { border-radius: 0; }
 
 .home-tool-button:active { transform: translate(2px, 2px); }
 
+.home-tool-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+  filter: grayscale(0.7);
+}
+
+.home-tool-button:disabled:hover,
+.home-tool-button:disabled:focus-visible {
+  transform: none;
+  border-color: #5f5546;
+  border-right-color: #271f1b;
+  border-bottom-color: #271f1b;
+  background: rgb(17 20 17 / 0.92);
+  color: #a7b29a;
+  outline: 3px solid #070807;
+}
+
 .tool-icon {
   width: 25px;
   height: 25px;
@@ -678,7 +695,11 @@ button { border-radius: 0; }
 }
 
 .duo-slot-label { color: var(--skin-color, #988c82); }
-.duo-slot input[readonly] { color: #a09a8e; }
+.duo-slot input[readonly] {
+  color: #a09a8e;
+  cursor: default;
+  opacity: 0.82;
+}
 
 .duo-skin-selector {
   display: grid;

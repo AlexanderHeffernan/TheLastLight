@@ -218,15 +218,6 @@ export class DuoSession {
     if (this.remotePaused) callbacks.paused?.(true);
   }
 
-  updateCallsign(callsign: string): void {
-    const normalized = callsign.trim().slice(0, 18);
-    if (!normalized) return;
-    if (this.role === 'host') this.lobby.hostCallsign = normalized;
-    else this.lobby.guestCallsign = normalized;
-    this.emitLobby();
-    this.send({ type: 'callsign', callsign: normalized });
-  }
-
   updateSkin(skinId: string): void {
     if (this.started) return;
     const normalized = skinId.trim().slice(0, 64);
@@ -607,7 +598,6 @@ export class DuoSession {
       this.markConnected();
       this.startPing();
       if (this.role === 'guest') {
-        this.send({ type: 'callsign', callsign: this.localCallsign });
         this.send({ type: 'skin', skinId: this.lobby.guestSkinId });
         this.send({ type: 'aim', aim: this.lobby.guestAim });
       } else {
@@ -738,15 +728,6 @@ export class DuoSession {
     }
     if (message.type === 'restart-request' && this.role === 'guest') {
       void this.startIceRestart();
-      return;
-    }
-    if (message.type === 'callsign' && this.role === 'host') {
-      const callsign = String(message.callsign ?? '').trim().slice(0, 18);
-      if (callsign) {
-        this.lobby.guestCallsign = callsign;
-        this.emitLobby();
-        this.broadcastLobby();
-      }
       return;
     }
     if (message.type === 'skin' && this.role === 'host' && !this.started) {

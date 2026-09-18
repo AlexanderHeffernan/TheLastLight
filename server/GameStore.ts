@@ -110,7 +110,7 @@ export class GameStore {
     return this.data.playCount;
   }
 
-  async claimName(name: unknown, playerId: string): Promise<NameClaimResult> {
+  checkName(name: unknown, playerId: string): NameClaimResult {
     const nameResult = validatePlayerName(name);
     if (!nameResult.ok || !validPlayerId(playerId)) {
       return {
@@ -134,18 +134,30 @@ export class GameStore {
       return { ok: false, reason: 'capacity', message: 'The callsign registry is temporarily full.' };
     }
 
+    return { ok: true, name: nameResult.name };
+  }
+
+  async claimName(name: unknown, playerId: string): Promise<NameClaimResult> {
+    const availability = this.checkName(name, playerId);
+    if (!availability.ok) return availability;
+
+    const claimKey = callsignKey(availability.name);
+    const matchingName = this.data.leaderboard.find((entry) => (
+      entry.mode === 'solo' && sameName(entry.name, availability.name)
+    ));
+
     let changed = this.data.callsignClaims[claimKey] !== playerId;
     this.data.callsignClaims[claimKey] = playerId;
     if (matchingName) {
-      if (matchingName.name !== nameResult.name || matchingName.playerId !== playerId) {
-        matchingName.name = nameResult.name;
+      if (matchingName.name !== availability.name || matchingName.playerId !== playerId) {
+        matchingName.name = availability.name;
         matchingName.playerId = playerId;
         changed = true;
       }
     }
     if (changed) await this.queueSave();
 
-    return { ok: true, name: nameResult.name };
+    return availability;
   }
 
   async submit(

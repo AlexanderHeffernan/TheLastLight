@@ -154,6 +154,12 @@ const server = createServer(async (request, response) => {
       if (result.ok) return json(response, { result: result.value });
       return json(response, { error: result.message }, result.status);
     }
+    if (request.method === 'GET' && url.pathname === '/api/player') {
+      if (!allow(request, 'player-check', 60)) return json(response, { error: 'Too many requests' }, 429);
+      const result = gameStore.checkName(url.searchParams.get('name') ?? '', playerId(request, response));
+      if (result.ok) return json(response, result);
+      return json(response, { error: result.message }, nameClaimStatus(result.reason));
+    }
     if (request.method === 'POST' && url.pathname === '/api/player') {
       if (!allow(request, 'player-claim', 12)) return json(response, { error: 'Too many requests' }, 429);
       const body = await readJson(request);

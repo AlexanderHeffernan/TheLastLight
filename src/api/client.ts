@@ -89,6 +89,20 @@ export async function claimPlayerName(name: string): Promise<string> {
   }
 }
 
+export async function checkPlayerName(name: string): Promise<string> {
+  try {
+    const response = await request<{ ok: true; name: string }>(
+      `/api/player?name=${encodeURIComponent(name)}`,
+    );
+    return response.name;
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 409) {
+      throw new CallsignUnavailableError(error.message);
+    }
+    throw error;
+  }
+}
+
 export async function getLeaderboard(mode: LeaderboardMode = 'solo'): Promise<LeaderboardEntry[]> {
   const response = await request<{ entries: LeaderboardEntry[] }>(`/api/leaderboard?mode=${mode}`);
   return response.entries;

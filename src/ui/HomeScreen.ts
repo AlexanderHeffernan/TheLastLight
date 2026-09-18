@@ -1,5 +1,6 @@
 import {
   CallsignUnavailableError,
+  checkPlayerName,
   claimPlayerName,
   flushPendingScores,
   getChangelog,
@@ -53,9 +54,11 @@ export class HomeScreen {
   private menuFadeFrame?: number;
   private menuUnlockHandler?: () => void;
   private deploying = false;
+  private callsignCheckTimer?: number;
+  private callsignCheckGeneration = 0;
+  private callsignAvailable = false;
   private duoSession?: DuoSession;
   private duoLobbyState?: DuoLobbyState;
-  private duoLocalCallsign = '';
   private duoBusy = false;
   private lobbyAimFrame?: number;
   private lobbyAimAnimationFrame?: number;
@@ -73,10 +76,10 @@ export class HomeScreen {
     this.callsign.value = localStorage.getItem(CALLSIGN_KEY) ?? '';
     const savedSkinId = localStorage.getItem(SKIN_KEY);
     this.soloSkinId = savedSkinId
-      ? this.resolveSkinId(this.callsign.value, savedSkinId)
+      ? savedSkinId
       : getDefaultPlayerSkin(this.callsign.value).id;
-    this.lastSoloCallsign = this.callsign.value.trim().toLocaleLowerCase();
-    this.renderSoloSkin();
+    this.lastSoloCallsign = '';
+    this.updateSoloSkinForCallsign();
     void preloadPlayerSkinPreviews();
     this.callsign.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter') return;
@@ -85,6 +88,7 @@ export class HomeScreen {
     });
     element<HTMLFormElement>('deploy-form').addEventListener('submit', (event) => void this.deploy(event));
     this.skinButton.addEventListener('click', () => {
+      if (!this.callsignAvailable) return;
       this.renderSoloSkin();
       this.openModal('skin-modal');
     });
@@ -186,8 +190,11 @@ export class HomeScreen {
     this.notice.textContent = 'VERIFYING CALLSIGN...';
     try {
       callsign = await claimPlayerName(callsign);
+      this.callsignAvailable = true;
     } catch (error) {
       if (error instanceof CallsignUnavailableError) {
+        this.callsignAvailable = false;
+        this.renderSoloSkin(callsign);
         this.notice.textContent = 'CALLSIGN ALREADY IN USE';
         this.callsign.focus();
         return;
@@ -197,7 +204,9 @@ export class HomeScreen {
       this.deploying = false;
     }
     this.callsign.value = callsign;
-    const soloSkin = this.resolveSkin(callsign, this.soloSkinId);
+    const soloSkin = this.callsignAvailable
+      ? this.resolveSkin(callsign, this.soloSkinId)
+      : this.resolveSkin('', this.soloSkinId);
     this.soloSkinId = soloSkin.id;
     this.persistSkinPreference(soloSkin.id);
     this.renderSoloSkin(callsign);
@@ -224,7 +233,6 @@ export class HomeScreen {
       this.callsign.focus();
       return;
     }
-    this.duoLocalCallsign = result.name;
     this.openModal('duo-modal');
     this.renderDuoLoading('ESTABLISHING PRIVATE LINK...');
     this.duoBusy = true;
@@ -233,7 +241,6 @@ export class HomeScreen {
       const skinId = this.selectSkinForCallsign(callsign);
       const session = await DuoSession.createHost(callsign, this.duoCallbacks(), skinId);
       this.duoSession = session;
-      this.duoLocalCallsign = callsign;
       this.duoLobbyState = {
         roomCode: session.roomCode,
         hostCallsign: callsign,
@@ -325,7 +332,6 @@ export class HomeScreen {
       return;
     }
     this.duoBusy = true;
-    this.duoLocalCallsign = nameResult.name;
     this.renderDuoLoading('CONNECTING TO HOST...');
     try {
       const callsign = await claimDuoCallsign(nameResult.name);
@@ -450,7 +456,7 @@ export class HomeScreen {
     if (!session || !state) return;
     const wrapper = document.createElement('div');
     wrapper.className = 'duo-lobby';
-    const copy = text('p', 'Connected to the host. Confirm your callsign, then wait for the host to begin.');
+    const copy = text('p', 'Connected to the host. Your callsign is locked for this operation. Wait for the host to begin.');
     copy.className = 'duo-lobby-copy';
     wrapper.append(copy, this.makeCodeBlock(session.roomCode));
 
@@ -509,7 +515,7 @@ export class HomeScreen {
   private makeDuoSlot(
     playerId: DuoPlayerId,
     callsign: string,
-    readonly: boolean,
+    skinReadonly: boolean,
     skinId: string,
   ): HTMLElement {
     const skin = getPlayerSkin(skinId, callsign);
@@ -527,11 +533,12 @@ export class HomeScreen {
     input.spellcheck = false;
     input.value = callsign;
     input.placeholder = 'WAITING...';
-    input.readOnly = readonly;
+    input.readOnly = true;
+    input.setAttribute('aria-readonly', 'true');
     const entry = document.createElement('div');
     entry.className = 'duo-slot-entry single';
     entry.append(input);
-    slot.append(entry, this.makeSkinSelector(playerId, skin, readonly));
+    slot.append(entry, this.makeSkinSelector(playerId, skin, skinReadonly));
     return slot;
   }
 
@@ -566,19 +573,6 @@ export class HomeScreen {
   }
 
   private bindDuoSlotInputs(hostSlot: HTMLElement, guestSlot: HTMLElement): void {
-    const hostInput = hostSlot.querySelector<HTMLInputElement>('input');
-    const guestInput = guestSlot.querySelector<HTMLInputElement>('input');
-    hostInput?.addEventListener('input', () => {
-      if (this.duoSession?.role !== 'host') return;
-      this.duoLocalCallsign = hostInput.value;
-      this.duoSession.updateCallsign(hostInput.value);
-    });
-    guestInput?.addEventListener('input', () => {
-      if (this.duoSession?.role !== 'guest') return;
-      this.duoLocalCallsign = guestInput.value;
-      this.duoSession.updateCallsign(guestInput.value);
-      this.updateLocalSkinForCallsign('guest', guestInput.value);
-    });
     [hostSlot, guestSlot].forEach((slot) => {
       slot.querySelectorAll<HTMLButtonElement>('[data-skin-direction]').forEach((button) => {
         button.addEventListener('click', () => {
@@ -588,10 +582,6 @@ export class HomeScreen {
         });
       });
     });
-    hostInput?.addEventListener('input', () => {
-      if (this.duoSession?.role !== 'host') return;
-      this.updateLocalSkinForCallsign('host', hostInput.value);
-    });
   }
 
   private resolveSkin(callsign: string, preferredId?: string | null): ReturnType<typeof getPlayerSkin> {
@@ -599,15 +589,12 @@ export class HomeScreen {
     return available.find((skin) => skin.id === preferredId) ?? getDefaultPlayerSkin(callsign);
   }
 
-  private resolveSkinId(callsign: string, preferredId?: string | null): string {
-    return this.resolveSkin(callsign, preferredId).id;
-  }
-
   private persistSkinPreference(skinId: string): void {
     localStorage.setItem(SKIN_KEY, skinId);
   }
 
   private selectSkinForCallsign(callsign: string): string {
+    this.callsignAvailable = true;
     const skin = this.resolveSkin(callsign, this.soloSkinId);
     this.soloSkinId = skin.id;
     this.persistSkinPreference(skin.id);
@@ -619,18 +606,59 @@ export class HomeScreen {
     const normalizedCallsign = callsign.trim().toLocaleLowerCase();
     const callsignChanged = normalizedCallsign !== this.lastSoloCallsign;
     const defaultSkin = getDefaultPlayerSkin(callsign);
-    const preferredId = callsignChanged && defaultSkin.secret ? defaultSkin.id : this.soloSkinId;
-    const skin = this.resolveSkin(callsign, preferredId);
+    if (callsignChanged && defaultSkin.secret) this.soloSkinId = defaultSkin.id;
     this.lastSoloCallsign = normalizedCallsign;
-    this.soloSkinId = skin.id;
-    this.persistSkinPreference(skin.id);
+    this.callsignAvailable = false;
     this.renderSoloSkin(callsign);
+    this.scheduleCallsignAvailabilityCheck();
+  }
+
+  private scheduleCallsignAvailabilityCheck(): void {
+    if (this.callsignCheckTimer !== undefined) window.clearTimeout(this.callsignCheckTimer);
+    const generation = ++this.callsignCheckGeneration;
+    const result = validatePlayerName(this.callsign.value);
+    if (!result.ok) return;
+    const callsign = result.name;
+    this.callsignCheckTimer = window.setTimeout(() => {
+      this.callsignCheckTimer = undefined;
+      void this.checkCallsignAvailability(callsign, generation);
+    }, 180);
+  }
+
+  private async checkCallsignAvailability(callsign: string, generation: number): Promise<void> {
+    try {
+      const availableCallsign = await checkPlayerName(callsign);
+      if (!this.isCurrentCallsignCheck(callsign, generation)) return;
+      this.callsignAvailable = true;
+      this.renderSoloSkin(availableCallsign);
+    } catch {
+      if (!this.isCurrentCallsignCheck(callsign, generation)) return;
+      this.callsignAvailable = false;
+      this.renderSoloSkin(callsign);
+    }
+  }
+
+  private isCurrentCallsignCheck(callsign: string, generation: number): boolean {
+    if (generation !== this.callsignCheckGeneration) return false;
+    const result = validatePlayerName(this.callsign.value);
+    return result.ok && result.name.toLocaleLowerCase() === callsign.toLocaleLowerCase();
   }
 
   private renderSoloSkin(callsign = this.callsign.value): void {
-    const skin = this.resolveSkin(callsign, this.soloSkinId);
-    const available = getAvailablePlayerSkins(callsign);
-    this.soloSkinId = skin.id;
+    const available = this.callsignAvailable
+      ? getAvailablePlayerSkins(callsign)
+      : getAvailablePlayerSkins('');
+    const skin = available.find((candidate) => candidate.id === this.soloSkinId)
+      ?? getDefaultPlayerSkin(this.callsignAvailable ? callsign : '');
+    if (this.callsignAvailable) {
+      this.soloSkinId = skin.id;
+      this.persistSkinPreference(skin.id);
+    }
+    this.skinButton.disabled = !this.callsignAvailable;
+    this.skinButton.setAttribute('aria-disabled', String(!this.callsignAvailable));
+    this.skinButton.title = this.callsignAvailable
+      ? 'CHOOSE SURVIVOR SKIN'
+      : 'ENTER AN AVAILABLE CALLSIGN TO CHOOSE A SURVIVOR';
     this.soloSkinPicker.style.setProperty('--skin-color', skin.hex);
     this.soloSkinName.textContent = skin.name.toUpperCase();
     const current = this.soloSkinSelector.querySelector<HTMLElement>('.duo-skin-current');
@@ -639,11 +667,12 @@ export class HomeScreen {
       this.soloSkinPreview.style.transform = '';
     }
     this.soloSkinSelector.querySelectorAll<HTMLButtonElement>('[data-solo-skin-direction]').forEach((button) => {
-      button.disabled = available.length <= 1;
+      button.disabled = !this.callsignAvailable || available.length <= 1;
     });
   }
 
   private cycleSoloSkin(direction: number): void {
+    if (!this.callsignAvailable) return;
     const available = getAvailablePlayerSkins(this.callsign.value);
     if (available.length < 2) return;
     const currentIndex = Math.max(0, available.findIndex((skin) => skin.id === this.soloSkinId));
@@ -700,23 +729,6 @@ export class HomeScreen {
     selector.querySelectorAll<HTMLButtonElement>('[data-skin-direction]').forEach((button) => {
       button.disabled = !canEdit || getAvailablePlayerSkins(callsign).length <= 1;
     });
-  }
-
-  private updateLocalSkinForCallsign(playerId: DuoPlayerId, callsign: string): void {
-    const session = this.duoSession;
-    const state = this.duoLobbyState;
-    if (!session || !state || session.localPlayerId !== playerId) return;
-    const currentId = playerId === 'host' ? state.hostSkinId : state.guestSkinId;
-    const available = getAvailablePlayerSkins(callsign);
-    const defaultSkin = getDefaultPlayerSkin(callsign);
-    const currentIsAvailable = available.some((skin) => skin.id === currentId);
-    const nextId = defaultSkin.secret || !currentIsAvailable ? defaultSkin.id : currentId;
-    if (nextId !== currentId) {
-      this.persistSkinPreference(nextId);
-      if (session.localPlayerId === playerId) this.soloSkinId = nextId;
-      session.updateSkin(nextId);
-    }
-    else this.updateDuoLobby();
   }
 
   private updateSkinPreview(
@@ -935,10 +947,10 @@ export class HomeScreen {
     this.deploying = true;
     this.notice.textContent = 'PREPARING DUO DEPLOYMENT...';
     try {
-      // The lobby inputs are editable after the initial room claim. Re-check
-      // the final local callsign here so a newly entered duo callsign is also
-      // persisted to, and protected by, this browser's profile.
+      // The callsign was claimed before the lobby opened. Re-check the final
+      // local value here as defense in depth before deploying the operation.
       callsign = await claimDuoCallsign(callsign);
+      this.callsignAvailable = true;
       this.callsign.value = callsign;
       this.soloSkinId = skinId;
       this.persistSkinPreference(skinId);
