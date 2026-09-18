@@ -233,11 +233,23 @@ export class HomeScreen {
       this.callsign.focus();
       return;
     }
+    this.duoBusy = true;
+    this.notice.textContent = 'VERIFYING CALLSIGN...';
+    let callsign: string;
+    try {
+      callsign = await claimDuoCallsign(result.name);
+    } catch (error) {
+      this.showDuoCallsignError(error, result.name);
+      this.duoBusy = false;
+      return;
+    }
+    this.callsign.value = callsign;
+    this.callsignAvailable = true;
+    this.renderSoloSkin(callsign);
+    this.notice.textContent = '';
     this.openModal('duo-modal');
     this.renderDuoLoading('ESTABLISHING PRIVATE LINK...');
-    this.duoBusy = true;
     try {
-      const callsign = await claimDuoCallsign(result.name);
       const skinId = this.selectSkinForCallsign(callsign);
       const session = await DuoSession.createHost(callsign, this.duoCallbacks(), skinId);
       this.duoSession = session;
@@ -260,8 +272,29 @@ export class HomeScreen {
     }
   }
 
-  private openJoinDuo(prefillCode = ''): void {
+  private async openJoinDuo(prefillCode = ''): Promise<void> {
     if (this.duoBusy || this.deploying) return;
+    const result = validatePlayerName(this.callsign.value);
+    if (!result.ok) {
+      this.notice.textContent = result.reason.toUpperCase();
+      this.callsign.focus();
+      return;
+    }
+    this.duoBusy = true;
+    this.notice.textContent = 'VERIFYING CALLSIGN...';
+    let callsign: string;
+    try {
+      callsign = await claimDuoCallsign(result.name);
+    } catch (error) {
+      this.showDuoCallsignError(error, result.name);
+      this.duoBusy = false;
+      return;
+    }
+    this.callsign.value = callsign;
+    this.callsignAvailable = true;
+    this.renderSoloSkin(callsign);
+    this.notice.textContent = '';
+    this.duoBusy = false;
     this.openModal('duo-modal');
     const wrapper = document.createElement('div');
     wrapper.className = 'duo-lobby';
@@ -270,15 +303,6 @@ export class HomeScreen {
 
     const form = document.createElement('form');
     form.className = 'duo-form';
-    const callsignLabel = document.createElement('label');
-    callsignLabel.textContent = 'YOUR CALLSIGN';
-    const callsignInput = document.createElement('input');
-    callsignInput.id = 'duo-join-callsign';
-    callsignInput.maxLength = 18;
-    callsignInput.autocomplete = 'off';
-    callsignInput.spellcheck = false;
-    callsignInput.value = this.callsign.value;
-    callsignLabel.append(callsignInput);
     const codeLabel = document.createElement('label');
     codeLabel.textContent = 'INVITE CODE';
     const codeInput = document.createElement('input');
@@ -309,19 +333,19 @@ export class HomeScreen {
     join.type = 'submit';
     join.textContent = 'JOIN DUOS';
     actions.append(cancel, join);
-    form.append(callsignLabel, codeLabel, actions);
+    form.append(codeLabel, actions);
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      void this.joinDuo(callsignInput.value, codeInput.value);
+      void this.joinDuo(codeInput.value);
     });
     wrapper.append(copy, form);
     this.duoContent.replaceChildren(wrapper);
-    callsignInput.focus();
+    codeInput.focus();
   }
 
-  private async joinDuo(rawCallsign: string, rawCode: string): Promise<void> {
+  private async joinDuo(rawCode: string): Promise<void> {
     if (this.duoBusy) return;
-    const nameResult = validatePlayerName(rawCallsign);
+    const nameResult = validatePlayerName(this.callsign.value);
     if (!nameResult.ok) {
       this.renderDuoError(nameResult.reason.toUpperCase());
       return;
@@ -606,6 +630,7 @@ export class HomeScreen {
     const normalizedCallsign = callsign.trim().toLocaleLowerCase();
     const callsignChanged = normalizedCallsign !== this.lastSoloCallsign;
     const defaultSkin = getDefaultPlayerSkin(callsign);
+    if (!this.deploying) this.notice.textContent = '';
     if (callsignChanged && defaultSkin.secret) this.soloSkinId = defaultSkin.id;
     this.lastSoloCallsign = normalizedCallsign;
     this.callsignAvailable = false;
@@ -631,10 +656,13 @@ export class HomeScreen {
       if (!this.isCurrentCallsignCheck(callsign, generation)) return;
       this.callsignAvailable = true;
       this.renderSoloSkin(availableCallsign);
-    } catch {
+    } catch (error) {
       if (!this.isCurrentCallsignCheck(callsign, generation)) return;
       this.callsignAvailable = false;
       this.renderSoloSkin(callsign);
+      if (!this.deploying && error instanceof CallsignUnavailableError) {
+        this.notice.textContent = 'CALLSIGN ALREADY IN USE';
+      }
     }
   }
 
@@ -899,6 +927,15 @@ export class HomeScreen {
     wrapper.firstElementChild!.className = 'duo-status';
     wrapper.lastElementChild!.className = 'duo-lobby-note';
     this.duoContent.replaceChildren(wrapper);
+  }
+
+  private showDuoCallsignError(error: unknown, callsign: string): void {
+    this.callsignAvailable = false;
+    this.renderSoloSkin(callsign);
+    this.notice.textContent = error instanceof CallsignUnavailableError
+      ? 'CALLSIGN ALREADY IN USE'
+      : 'DUO CALLSIGN CHECK FAILED — TRY AGAIN';
+    this.callsign.focus();
   }
 
   private renderDuoError(message: string): void {
