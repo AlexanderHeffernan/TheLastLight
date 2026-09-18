@@ -2435,13 +2435,13 @@ export class ArenaScene extends Phaser.Scene {
         backgroundColor: '#080b09e6',
         padding: { x: 4, y: 2 },
       }).setOrigin(0.5).setDepth(22).setVisible(this.isDuo && actor.id !== this.localPlayerId);
-      actor.youLabel = this.add.text(actor.sprite.x, actor.sprite.y - 65, actor.id === this.localPlayerId ? 'YOU' : '', {
+      actor.youLabel = this.add.text(actor.sprite.x, actor.sprite.y - 65, this.isDuo && actor.id === this.localPlayerId ? 'YOU' : '', {
         ...labelStyle,
         fontSize: '9px',
         color: '#e8dfcf',
         backgroundColor: '#080b09dc',
         padding: { x: 3, y: 1 },
-      }).setOrigin(0.5).setDepth(22).setVisible(actor.id === this.localPlayerId);
+      }).setOrigin(0.5).setDepth(22).setVisible(this.isDuo && actor.id === this.localPlayerId);
       actor.healthBack = this.add.rectangle(actor.sprite.x, actor.sprite.y - 36, 38, 6, 0x0a0b0a, 0.58)
         .setStrokeStyle(1, actor.color, 0.65)
         .setDepth(20);
