@@ -211,6 +211,17 @@ export class AudioSystem {
     this.playToneInternal(context, frequency, duration, volume, type);
   }
 
+  playToneLocally(
+    frequency: number,
+    duration: number,
+    volume: number,
+    type: DuoOscillatorType = 'square',
+  ): void {
+    const context = this.context();
+    if (!context || context.state !== 'running') return;
+    this.playToneInternal(context, frequency, duration, volume, type);
+  }
+
   playNoise(
     duration: number,
     volume: number,

@@ -12,7 +12,23 @@
   --edge: #55443b;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+img,
+canvas {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+::selection {
+  background: transparent;
+  color: inherit;
+}
 
 html,
 body {
@@ -24,6 +40,8 @@ body {
   overscroll-behavior: none;
   background: #070807;
 }
+
+html { -webkit-tap-highlight-color: transparent; }
 
 button,
 input { font: inherit; }

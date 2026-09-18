@@ -19,6 +19,13 @@ let removeMobileControls: (() => void) | undefined;
 
 const ORIENTATION_NOTICE_DURATION_MS = 2_000;
 
+const preventBrowserSelection = (event: Event): void => {
+  event.preventDefault();
+};
+
+document.addEventListener('selectstart', preventBrowserSelection);
+document.addEventListener('dragstart', preventBrowserSelection);
+
 function refreshGameViewport(): void {
   const viewport = window.visualViewport;
   const shell = document.querySelector<HTMLElement>('#game-shell');

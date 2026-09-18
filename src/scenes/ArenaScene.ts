@@ -692,6 +692,12 @@ export class ArenaScene extends Phaser.Scene {
       case 'supply-opened':
         this.showRemoteSupplyPickup(string('kind', 'medkit'), number('x', 585), number('y', 262));
         break;
+      case 'player-hit': {
+        if (string('playerId') !== this.localPlayerId) break;
+        const local = this.actor(this.localPlayerId);
+        if (local) this.playLocalDamageFeedback(local);
+        break;
+      }
       case 'music-cue':
         this.audio.applyNetworkCue({ key: string('key'), loop: Boolean(payload.loop) } satisfies MusicCue);
         break;
@@ -5032,6 +5038,14 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
+  private playLocalDamageFeedback(actor: PlayerActor): void {
+    this.audio.playToneLocally(68, 0.2, 0.07, 'sawtooth');
+    actor.sprite.setTintFill(0xffe6d3);
+    this.time.delayedCall(90, () => actor.alive && actor.sprite.clearTint());
+    this.cameras.main.shake(160, 0.009);
+    this.cameras.main.flash(80, 120, 18, 12, false);
+  }
+
   damagePlayer(amount: number, playerId: DuoPlayerId = this.combatTargetId ?? this.localPlayerId): boolean {
     const actor = this.actor(playerId);
     if (!actor || !actor.alive || this.isGameOver) return false;
@@ -5041,13 +5055,10 @@ export class ArenaScene extends Phaser.Scene {
     this.lastHurt = this.time.now;
     actor.health = Math.max(0, actor.health - amount);
     if (playerId === this.localPlayerId) this.health = actor.health;
-    this.audio.playTone(68, 0.2, 0.07, 'sawtooth', { x: actor.sprite.x, y: actor.sprite.y });
+    this.emitDuoEvent('player-hit', { playerId });
     actor.healthBar?.setScale(Phaser.Math.Clamp(actor.health / 100, 0, 1), 1);
     actor.healthBar?.setFillStyle(actor.health <= 35 ? 0xd4513f : actor.color);
-    actor.sprite.setTintFill(0xffe6d3);
-    this.time.delayedCall(90, () => actor.alive && actor.sprite.clearTint());
-    this.cameras.main.shake(160, 0.009);
-    this.cameras.main.flash(80, 120, 18, 12, false);
+    if (playerId === this.localPlayerId) this.playLocalDamageFeedback(actor);
     if (actor.health <= 0) {
       actor.alive = false;
       if (actor.sprite.body) actor.sprite.body.enable = false;

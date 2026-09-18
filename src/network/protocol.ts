@@ -116,6 +116,7 @@ export type DuoEventType =
   | 'supply-drop'
   | 'supply-ready'
   | 'supply-opened'
+  | 'player-hit'
   | 'music-cue'
   | 'sound-effect';
 
