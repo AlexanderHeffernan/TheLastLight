@@ -9,6 +9,7 @@ import {
   type LeaderboardEntry,
   type LeaderboardMode,
 } from '../api/client';
+import { hasTouchControls } from '../config/controls';
 import lastNightAliveUrl from '../assets/audio/Last Night Alive.mp3';
 import lastNightAliveAlternateUrl from '../assets/audio/Last Night Alive-2.mp3';
 import { validatePlayerName } from '../shared/nameValidator';
@@ -68,6 +69,7 @@ export class HomeScreen {
   private leaderboardMode: LeaderboardMode = 'solo';
 
   constructor(private readonly options: HomeScreenOptions) {
+    document.documentElement.classList.toggle('touch-controls-available', hasTouchControls());
     this.callsign.value = localStorage.getItem(CALLSIGN_KEY) ?? '';
     const savedSkinId = localStorage.getItem(SKIN_KEY);
     this.soloSkinId = savedSkinId
@@ -76,6 +78,11 @@ export class HomeScreen {
     this.lastSoloCallsign = this.callsign.value.trim().toLocaleLowerCase();
     this.renderSoloSkin();
     void preloadPlayerSkinPreviews();
+    this.callsign.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      this.callsign.blur();
+    });
     element<HTMLFormElement>('deploy-form').addEventListener('submit', (event) => void this.deploy(event));
     this.skinButton.addEventListener('click', () => {
       this.renderSoloSkin();
