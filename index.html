@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#070807" />
     <meta name="color-scheme" content="dark" />
     <meta name="description" content="Play The Last Light, a free pixel-art top-down survival shooter created by Alexander Heffernan. Hold a floodlit outpost against an endless horde." />
@@ -84,7 +84,7 @@
       <form id="deploy-form" class="home-panel" autocomplete="off">
         <label class="callsign-label" for="callsign">SURVIVOR CALLSIGN</label>
         <div class="callsign-entry">
-          <input id="callsign" name="callsign" maxlength="18" placeholder="ENTER CALLSIGN" autocomplete="off" spellcheck="false" required />
+          <input id="callsign" name="callsign" maxlength="18" placeholder="ENTER CALLSIGN" autocomplete="off" spellcheck="false" enterkeyhint="done" required />
           <div class="callsign-tools" aria-label="Survivor and game mode options">
             <button id="skin-button" class="home-tool-button" type="button" aria-label="Choose survivor skin" title="CHOOSE SURVIVOR SKIN">
               <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5a2.1 2.1 0 1 0-2.1-2.1" /><path d="M12 4.5v3.1l-8.2 5.8c-1 .7-.5 2.1.7 2.1h15c1.2 0 1.7-1.4.7-2.1L12 7.6" /></svg>
@@ -106,17 +106,6 @@
           <button id="how-to-button" class="menu-button" type="button">HOW TO PLAY</button>
           <button id="leaderboard-button" class="menu-button" type="button">LEADERBOARD</button>
         </div>
-        <fieldset class="control-scheme-picker">
-          <legend>AIM MODE</legend>
-          <label class="control-scheme-option">
-            <input type="radio" name="mobile-control-scheme" value="drag-aim" />
-            <span><strong>DRAG AIM</strong><small>TAP / DRAG</small></span>
-          </label>
-          <label class="control-scheme-option">
-            <input type="radio" name="mobile-control-scheme" value="twin-stick" />
-            <span><strong>TWIN STICK</strong><small>RIGHT STICK</small></span>
-          </label>
-        </fieldset>
         <p id="home-notice" class="home-notice" aria-live="polite"></p>
       </form>
 
@@ -162,7 +151,7 @@
         <h2 id="how-to-title">HOW TO SURVIVE</h2>
         <div class="how-to-grid">
           <article><kbd>WASD<br/>STICK</kbd><div><strong>KEEP MOVING</strong><p>Use WASD, the arrow keys, or the left stick. Standing still is a death sentence.</p></div></article>
-          <article><kbd>MOUSE<br/>TOUCH</kbd><div><strong>AIM & FIRE</strong><p>Aim with the mouse and hold the left button. On touch, use the selected drag-aim or twin-stick control scheme.</p></div></article>
+          <article><kbd>MOUSE<br/>TOUCH</kbd><div><strong>AIM & FIRE</strong><p>Aim with the mouse and hold the left button. On touch, use the aim stick to point and fire.</p></div></article>
           <article><kbd>F</kbd><div><strong>AERIAL FLARES</strong><p>The generator fabricates flares. Fire one overhead to reclaim the darkness.</p></div></article>
           <article><kbd>E</kbd><div><strong>SUPPLY DROPS</strong><p>Approach a landed cache and press E to open it.</p></div></article>
           <article><kbd>P / ESC</kbd><div><strong>PAUSE</strong><p>Pause the operation whenever you need a moment.</p></div></article>
@@ -231,6 +220,27 @@
 
     <main id="game-shell" class="game-shell hidden" aria-label="The Last Light top-down shooter">
       <div id="game"></div>
+      <div id="mobile-controls" class="mobile-controls" aria-label="Touch controls">
+        <div class="mobile-stick mobile-stick-move" data-mobile-stick="move" aria-label="Movement joystick">
+          <span class="mobile-stick-thumb"></span>
+        </div>
+        <div class="mobile-control-rail mobile-control-rail-right">
+          <button class="mobile-action mobile-action-pause" type="button" data-mobile-action="pause" aria-label="Pause">
+            <img data-mobile-icon="pause" alt="" />
+          </button>
+          <div class="mobile-actions">
+            <button class="mobile-action" type="button" data-mobile-action="flare" aria-label="Fire flare">
+              <img data-mobile-icon="flare" alt="" />
+            </button>
+            <button class="mobile-action" type="button" data-mobile-action="interact" aria-label="Open supply cache">
+              <img data-mobile-icon="interact" alt="" />
+            </button>
+          </div>
+        </div>
+        <div class="mobile-stick mobile-stick-aim" data-mobile-stick="aim" aria-label="Aim and fire joystick">
+          <span class="mobile-stick-thumb"></span>
+        </div>
+      </div>
       <div class="scanlines" aria-hidden="true"></div>
       <div class="vignette" aria-hidden="true"></div>
     </main>

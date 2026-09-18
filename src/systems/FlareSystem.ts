@@ -101,14 +101,6 @@ export class FlareSystem {
       && time >= this.activeUntil;
   }
 
-  chargeProgress(time: number): number {
-    if (this.charges > 0 && !this.launching && time >= this.activeUntil) return 1;
-    if (this.pendingCartridge) return 1;
-    if (this.launching || time < this.activeUntil || !this.hooks.isGeneratorOnline()) return 0;
-    const duration = this.unlocked ? this.rechargeDuration : this.firstChargeDuration;
-    return Phaser.Math.Clamp(this.rechargeElapsed / duration, 0, 1);
-  }
-
   addCharge(): boolean {
     if (!this.canAddCharge()) return false;
     this.charges += 1;

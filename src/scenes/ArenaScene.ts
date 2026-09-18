@@ -8,7 +8,7 @@ import {
   PLAYER_SPEED,
   SOUTH_FACING_OFFSET as SOUTH_OFFSET,
 } from '../config/constants';
-import { getMobileControlScheme, hasTouchControls, type MobileControlScheme } from '../config/controls';
+import { hasTouchControls } from '../config/controls';
 import { AudioSystem, type MusicCue } from '../systems/AudioSystem';
 import { FlareSystem } from '../systems/FlareSystem';
 import { LightingSystem, type PlayerLight, type ShadowCaster } from '../systems/LightingSystem';
@@ -56,35 +56,8 @@ interface TouchVector {
   y: number;
 }
 
-const TOUCH_TAP_SLOP = 18;
-const MOBILE_CONTROL_PADDING = 8;
-const JOYSTICK_BASE_RADIUS = 92;
-const JOYSTICK_RING_RADIUS = 65;
-const JOYSTICK_THUMB_RADIUS = 38;
-const JOYSTICK_MOVE_RADIUS = 78;
-const JOYSTICK_EDGE_PADDING = 28;
-const JOYSTICK_CENTER_X = JOYSTICK_BASE_RADIUS + JOYSTICK_EDGE_PADDING;
-const JOYSTICK_CENTER_Y = HEIGHT - JOYSTICK_BASE_RADIUS - JOYSTICK_EDGE_PADDING;
-const AIM_JOYSTICK_CENTER_X = WIDTH - JOYSTICK_CENTER_X;
-const AIM_JOYSTICK_CENTER_Y = JOYSTICK_CENTER_Y;
-const AIM_JOYSTICK_FIRE_DEAD_ZONE = JOYSTICK_RING_RADIUS;
-const JOYSTICK_BASE_IDLE_ALPHA = 0.2;
-const JOYSTICK_BASE_ACTIVE_ALPHA = 0.12;
-const JOYSTICK_THUMB_IDLE_ALPHA = 0.3;
-const JOYSTICK_THUMB_ACTIVE_ALPHA = 0.22;
-const MOBILE_ACTION_RADIUS = 40;
-const MOBILE_ACTION_HIT_RADIUS = 48;
-const MOBILE_PAUSE_RADIUS = 24;
-const MOBILE_PAUSE_HIT_RADIUS = 32;
-const MOBILE_ACTION_Y = HEIGHT - MOBILE_ACTION_RADIUS - MOBILE_CONTROL_PADDING;
-const MOBILE_ACTION_STEP = 88;
-const MOBILE_ACTION_RIGHT_MARGIN = 48;
 const MOBILE_TOUCH_HINT_Y = HEIGHT - 150;
-const MOBILE_PAUSE_X = WIDTH - 42;
-const MOBILE_PAUSE_Y = 42;
-const MOBILE_TWIN_ACTION_X = MOBILE_PAUSE_X;
-const MOBILE_TWIN_ACTION_TOP_Y = MOBILE_PAUSE_Y + MOBILE_PAUSE_HIT_RADIUS + MOBILE_ACTION_HIT_RADIUS + 8;
-const MOBILE_TWIN_ACTION_BOTTOM_Y = MOBILE_TWIN_ACTION_TOP_Y + MOBILE_ACTION_STEP;
+const AIM_FIRE_DEAD_ZONE = 0.7;
 
 interface TreeLayers {
   x: number;
@@ -196,50 +169,12 @@ export class ArenaScene extends Phaser.Scene {
   private barrelDropEvent?: Phaser.Time.TimerEvent;
   private barrelSlots: BarrelSlot[] = [];
   private bossHazards: BossHazard[] = [];
-  private readonly shadowGraphicBounds = new Map<string, { width: number; height: number }>();
   private readonly touchEnabled = hasTouchControls();
-  private readonly mobileControlScheme: MobileControlScheme = getMobileControlScheme();
-  private touchMovePointerId: number | null = null;
-  private touchAimPointerId: number | null = null;
+  private touchMoveActive = false;
   private touchMove: TouchVector = { x: 0, y: 0 };
-  private touchMoveCenter: TouchVector = { x: JOYSTICK_CENTER_X, y: JOYSTICK_CENTER_Y };
-  private touchAim: TouchVector = { x: WIDTH / 2 + 160, y: HEIGHT / 2 };
   private touchAimVector: TouchVector = { x: 1, y: 0 };
-  private touchAimCenter: TouchVector = { x: AIM_JOYSTICK_CENTER_X, y: AIM_JOYSTICK_CENTER_Y };
-  private touchAimStart: TouchVector = { x: 0, y: 0 };
-  private touchAimDragged = false;
   private touchAimFiring = false;
-  private joystickBase?: Phaser.GameObjects.Graphics;
-  private joystickThumb?: Phaser.GameObjects.Graphics;
-  private aimJoystickBase?: Phaser.GameObjects.Graphics;
-  private aimJoystickThumb?: Phaser.GameObjects.Graphics;
-  private mobileControls?: Phaser.GameObjects.Container;
-  private mobilePauseControl?: Phaser.GameObjects.Container;
-  private mobileActionAvailability: Partial<Record<'flare' | 'interact', (available: boolean, progress?: number) => void>> = {};
-  private mobileActionPositions = {
-    pause: {
-      x: MOBILE_PAUSE_X,
-      y: MOBILE_PAUSE_Y,
-      radius: MOBILE_PAUSE_RADIUS,
-      hitRadius: MOBILE_PAUSE_HIT_RADIUS,
-    },
-    flare: {
-      x: this.mobileControlScheme === 'twin-stick'
-        ? MOBILE_TWIN_ACTION_X
-        : WIDTH - MOBILE_ACTION_RIGHT_MARGIN - MOBILE_ACTION_STEP,
-      y: this.mobileControlScheme === 'twin-stick' ? MOBILE_TWIN_ACTION_TOP_Y : MOBILE_ACTION_Y,
-      radius: MOBILE_ACTION_RADIUS,
-      hitRadius: MOBILE_ACTION_HIT_RADIUS,
-    },
-    interact: {
-      x: this.mobileControlScheme === 'twin-stick'
-        ? MOBILE_TWIN_ACTION_X
-        : WIDTH - MOBILE_ACTION_RIGHT_MARGIN,
-      y: this.mobileControlScheme === 'twin-stick' ? MOBILE_TWIN_ACTION_BOTTOM_Y : MOBILE_ACTION_Y,
-      radius: MOBILE_ACTION_RADIUS,
-      hitRadius: MOBILE_ACTION_HIT_RADIUS,
-    },
-  };
+  private pausedForPortrait = false;
 
   private audio!: AudioSystem;
   private flares!: FlareSystem;
@@ -331,6 +266,58 @@ export class ArenaScene extends Phaser.Scene {
   private networkPaused = false;
   private networkWave = 1;
 
+  private readonly handleMobileControl = (event: Event): void => {
+    const detail = (event as CustomEvent<{
+      kind: 'move' | 'aim' | 'action';
+      x?: number;
+      y?: number;
+      active?: boolean;
+      action?: 'pause' | 'flare' | 'interact';
+    }>).detail;
+    if (!this.touchEnabled) return;
+    if (this.sound.locked) this.sound.unlock?.();
+
+    if (detail.kind === 'move') {
+      this.touchMove = detail.active ? { x: detail.x ?? 0, y: detail.y ?? 0 } : { x: 0, y: 0 };
+      this.touchMoveActive = detail.active === true;
+      return;
+    }
+    if (detail.kind === 'aim') {
+      const x = detail.x ?? 0;
+      const y = detail.y ?? 0;
+      const distance = Math.hypot(x, y);
+      if (distance > 0) this.touchAimVector = { x: x / distance, y: y / distance };
+      this.touchAimFiring = detail.active === true && distance > AIM_FIRE_DEAD_ZONE;
+      return;
+    }
+
+    if (detail.action === 'pause') {
+      if (!this.isGameOver) this.togglePause();
+    } else if (!this.isPaused && !this.isGameOver && detail.action === 'flare') {
+      this.flares.fire(this.currentAimAngle(), this.time.now);
+    } else if (!this.isPaused && !this.isGameOver && detail.action === 'interact') {
+      this.supplies.interact();
+    }
+  };
+
+  private readonly handleMobileOrientation = (event: Event): void => {
+    const { portrait } = (event as CustomEvent<{ portrait: boolean }>).detail;
+    if (portrait) {
+      this.touchMoveActive = false;
+      this.touchMove = { x: 0, y: 0 };
+      this.touchAimFiring = false;
+      if (!this.isPaused && !this.isGameOver) {
+        this.pausedForPortrait = true;
+        this.togglePause();
+      }
+    } else if (this.pausedForPortrait && this.isPaused && !this.isGameOver) {
+      this.pausedForPortrait = false;
+      this.togglePause();
+    } else if (!portrait) {
+      this.pausedForPortrait = false;
+    }
+  };
+
   private readonly handleLeaderboardResult = (event: Event): void => {
     const { runId, rank, newRecord, available } = (event as CustomEvent<{
       runId: string;
@@ -380,6 +367,11 @@ export class ArenaScene extends Phaser.Scene {
     this.playerKnockbackVelocity.set(0, 0);
     this.isGameOver = false;
     this.isPaused = false;
+    this.touchMoveActive = false;
+    this.touchMove = { x: 0, y: 0 };
+    this.touchAimVector = { x: 1, y: 0 };
+    this.touchAimFiring = false;
+    this.pausedForPortrait = false;
     this.bloodDecals = [];
     this.corpses = [];
     this.wasAdrenalineActive = false;
@@ -609,9 +601,7 @@ export class ArenaScene extends Phaser.Scene {
       if (!this.waitingForPartner) this.announce(
         'HOLD THE OUTPOST',
         this.touchEnabled
-          ? this.mobileControlScheme === 'twin-stick'
-            ? 'TAP LEFT SIDE TO MOVE • TAP RIGHT SIDE TO AIM • PUSH OUTER RING TO FIRE'
-            : 'TAP LEFT SIDE TO MOVE • TAP RIGHT SIDE TO FIRE'
+          ? 'TAP LEFT SIDE TO MOVE • HOLD RIGHT SIDE TO AIM • PUSH PAST INNER RING TO FIRE'
           : 'WASD TO MOVE • MOUSE TO AIM AND FIRE',
       );
     });
@@ -1961,15 +1951,16 @@ export class ArenaScene extends Phaser.Scene {
       const amount = Phaser.Math.Clamp((value - start) / (end - start), 0, 1);
       return amount * amount * (3 - 2 * amount);
     };
-    for (let y = 0; y < 64; y += 1) {
-      for (let x = 0; x < 192; x += 1) {
-        const progress = x / 191;
-        const halfWidth = 29 + progress * 3;
-        const edgeDistance = Math.abs(y - 31.5) / halfWidth;
-        const edgeFade = Math.exp(-Math.pow(edgeDistance * 1.35, 2));
-        const lengthFade = 1 - smoothstep(0.34, 1, progress);
-        const alpha = Math.round(255 * edgeFade * lengthFade);
-        const offset = (y * 192 + x) * 4;
+    for (let pixelY = 0; pixelY < 64; pixelY += 1) {
+      for (let pixelX = 0; pixelX < 192; pixelX += 1) {
+        const progress = pixelX / 191;
+        const halfWidth = 10 + progress * 15;
+        const edgeDistance = Math.abs(pixelY - 31.5) / halfWidth;
+        const edgeFade = Math.exp(-Math.pow(edgeDistance * 1.65, 2));
+        const lengthFade = Math.pow(1 - progress, 1.05);
+        const startRound = smoothstep(0, 0.055, progress);
+        const alpha = Math.round(190 * edgeFade * lengthFade * startRound);
+        const offset = (pixelY * 192 + pixelX) * 4;
         projectedPixels.data[offset + 3] = alpha;
       }
     }
@@ -2104,7 +2095,6 @@ export class ArenaScene extends Phaser.Scene {
     const shadow = this.add.image(position.x + 2, position.y + 3, 'soft-shadow')
       .setDisplaySize(36, 18)
       .setAlpha(0.72)
-      .setVisible(false)
       .setDepth(1);
     const glow = this.add.image(position.x, position.y, 'glow')
       .setScale(0.85)
@@ -2172,8 +2162,7 @@ export class ArenaScene extends Phaser.Scene {
       .setDepth(1)
       .setRotation(rotation)
       .setTintFill(0x000000)
-      .setAlpha(alpha)
-      .setVisible(false);
+      .setAlpha(alpha);
 
     const addSolid = (x, y, key, width, height, rotation = 0, health = 0) => {
       const prop = this.solidProps.create(x, y, key).setDepth(2).setRotation(rotation);
@@ -2292,8 +2281,7 @@ export class ArenaScene extends Phaser.Scene {
       .setDepth(1)
       .setRotation(rotation)
       .setTintFill(0x000000)
-      .setAlpha(0.3)
-      .setVisible(false);
+      .setAlpha(0.3);
     barrel.setData({
       networkId: `barrel-${slotIndex}`,
       kind: 'barrel',
@@ -2473,8 +2461,7 @@ export class ArenaScene extends Phaser.Scene {
           .setDepth(1)
           .setRotation(prop.rotation)
           .setTintFill(0x000000)
-          .setAlpha(0.25)
-          .setVisible(false));
+          .setAlpha(0.25));
       }
       this.time.delayedCall(180, () => prop.active && prop.clearTint());
     });
@@ -2603,46 +2590,33 @@ export class ArenaScene extends Phaser.Scene {
       padding: { x: 5, y: 2 },
     }).setOrigin(1, 0).setDepth(31).setVisible(false);
 
-    this.waveText = this.add.text(
-      WIDTH / 2,
-      20,
-      this.isDuo
-        ? this.isNetworkClient
-          ? 'WAITING FOR HOST TO BEGIN...'
-          : this.waitingForPartner
-            ? 'WAITING FOR SECOND SURVIVOR...'
-            : 'THREAT 01'
-        : 'THREAT 01',
-      {
-        ...labelStyle,
-        color: '#c86759',
-      },
-    ).setOrigin(0.5, 0).setDepth(30);
-    this.helpText = this.add.text(
-      WIDTH / 2,
-      this.touchEnabled ? MOBILE_TOUCH_HINT_Y : HEIGHT - 20,
+    this.waveText = this.add.text(WIDTH / 2, 20, this.isDuo
+      ? this.isNetworkClient
+        ? 'WAITING FOR HOST TO BEGIN...'
+        : this.waitingForPartner
+          ? 'WAITING FOR SECOND SURVIVOR...'
+          : 'THREAT 01'
+      : 'THREAT 01', {
+      ...labelStyle,
+      color: '#c86759',
+    }).setOrigin(0.5, 0).setDepth(30);
+    this.helpText = this.add.text(WIDTH / 2, this.touchEnabled ? MOBILE_TOUCH_HINT_Y : HEIGHT - 20,
       this.isDuo
         ? this.touchEnabled
-          ? this.mobileControlScheme === 'twin-stick'
-            ? 'TAP LEFT SIDE  MOVE  •  TAP RIGHT SIDE  AIM  •  OUTER RING  FIRE  •  TOP-RIGHT  PAUSE'
-            : 'TAP LEFT SIDE  MOVE  •  TAP  AIM + FIRE  •  DRAG  AIM  •  TOP-RIGHT  PAUSE'
+          ? 'TAP LEFT SIDE  MOVE  •  HOLD RIGHT SIDE  AIM  •  PUSH PAST INNER RING  FIRE  •  TOP-RIGHT  PAUSE'
           : 'WASD / ARROWS  MOVE  •  MOUSE  AIM + FIRE  •  F  FLARE  •  E  SUPPLY'
         : this.touchEnabled
-          ? this.mobileControlScheme === 'twin-stick'
-            ? 'TAP LEFT SIDE  MOVE  •  TAP RIGHT SIDE  AIM  •  OUTER RING  FIRE  •  TOP-RIGHT  PAUSE'
-            : 'TAP LEFT SIDE  MOVE  •  TAP  AIM + FIRE  •  DRAG  AIM  •  TOP-RIGHT  PAUSE'
-        : 'WASD / ARROWS  MOVE  •  MOUSE  AIM + FIRE  •  P / ESC  PAUSE',
-      {
+          ? 'TAP LEFT SIDE  MOVE  •  HOLD RIGHT SIDE  AIM  •  PUSH PAST INNER RING  FIRE  •  TOP-RIGHT  PAUSE'
+          : 'WASD / ARROWS  MOVE  •  MOUSE  AIM + FIRE  •  P / ESC  PAUSE', {
       ...labelStyle,
       ...(this.touchEnabled ? { fontSize: '10px' } : {}),
       color: '#c9b8ad',
       backgroundColor: '#0b0e0ccc',
       padding: { x: 8, y: 4 },
-      },
-    ).setOrigin(0.5, 1).setDepth(30);
+    }).setOrigin(0.5, 1).setDepth(30);
     this.tweens.add({ targets: this.helpText, alpha: 0, delay: 7600, duration: 1200 });
 
-    this.crosshair = this.add.graphics().setDepth(40);
+    this.crosshair = this.add.graphics().setDepth(40).setVisible(!this.touchEnabled);
     this.crosshair.lineStyle(1, 0xf3dc95, 0.9);
     this.crosshair.strokeCircle(0, 0, 7);
     this.crosshair.lineBetween(-11, 0, -5, 0).lineBetween(5, 0, 11, 0);
@@ -2650,7 +2624,8 @@ export class ArenaScene extends Phaser.Scene {
 
     this.aimLaser = this.add.graphics()
       .setDepth(19)
-      .setBlendMode(Phaser.BlendModes.ADD);
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setVisible(this.touchEnabled);
 
     if (import.meta.env.DEV) {
       this.debugText = this.add.text(
@@ -2688,9 +2663,7 @@ export class ArenaScene extends Phaser.Scene {
     }).setOrigin(0.5);
     const pauseControls = this.add.text(WIDTH / 2, HEIGHT / 2 - 31,
       this.touchEnabled
-        ? this.mobileControlScheme === 'twin-stick'
-          ? 'MOVE       TAP LEFT SIDE\nAIM        TAP RIGHT SIDE\nFIRE       AIM OUTER RING\nFLARE      FLARE BUTTON\nINTERACT   OPEN BUTTON'
-          : 'MOVE       TAP LEFT SIDE\nAIM        DRAG RIGHT SIDE\nFIRE       TAP RIGHT SIDE\nFLARE      FLARE BUTTON\nINTERACT   OPEN BUTTON'
+        ? 'MOVE       TAP LEFT SIDE\nAIM        HOLD RIGHT SIDE\nFIRE       PUSH PAST INNER RING\nFLARE      FLARE BUTTON\nINTERACT   OPEN BUTTON'
         : 'MOVE       WASD / ARROWS\nAIM        MOUSE\nFIRE       LEFT MOUSE\nFLARE      F\nINTERACT   E', {
         ...labelStyle,
         fontSize: '15px',
@@ -2719,10 +2692,9 @@ export class ArenaScene extends Phaser.Scene {
       HEIGHT / 2 + 160,
       this.isNetworkClient ? 'HOST CONTROLLED  //  WAIT FOR RESUME' : 'P / ESC  RESUME FIELD OPERATIONS',
       {
+        ...labelStyle,
         ...(this.touchEnabled ? { fontSize: '11px' } : {}),
-      ...labelStyle,
-      fontSize: '11px',
-      color: '#81766f',
+        color: '#81766f',
       },
     ).setOrigin(0.5);
     this.pauseMenu = this.add.container(0, 0, [
@@ -2739,187 +2711,22 @@ export class ArenaScene extends Phaser.Scene {
       pauseShortcut,
     ]).setDepth(60).setVisible(false);
 
-    if (this.touchEnabled) this.makeTouchInterface();
-  }
-
-  private makeTouchInterface(): void {
-    this.mobileActionAvailability = {};
-    const controls = this.add.container(0, 0).setDepth(55);
-    const pauseControl = this.add.container(0, 0).setDepth(75);
-    const joystickCenter = { x: JOYSTICK_CENTER_X, y: JOYSTICK_CENTER_Y };
-
-    this.joystickBase = this.add.graphics();
-    this.joystickBase.fillStyle(0x101713, 0.62).fillCircle(0, 0, JOYSTICK_BASE_RADIUS);
-    this.joystickBase.lineStyle(3, 0xb39b72, 0.52).strokeCircle(0, 0, JOYSTICK_BASE_RADIUS);
-    this.joystickBase.lineStyle(1, 0x6e5c4e, 0.45).strokeCircle(0, 0, JOYSTICK_RING_RADIUS);
-    this.joystickBase.setPosition(joystickCenter.x, joystickCenter.y);
-    this.joystickBase.setAlpha(JOYSTICK_BASE_IDLE_ALPHA);
-
-    this.joystickThumb = this.add.graphics();
-    this.joystickThumb.fillStyle(0xc76551, 0.8).fillCircle(0, 0, JOYSTICK_THUMB_RADIUS);
-    this.joystickThumb.lineStyle(3, 0xf1b287, 0.7).strokeCircle(0, 0, JOYSTICK_THUMB_RADIUS);
-    this.joystickThumb.setPosition(joystickCenter.x, joystickCenter.y);
-    this.joystickThumb.setAlpha(JOYSTICK_THUMB_IDLE_ALPHA);
-    controls.add([this.joystickBase, this.joystickThumb]);
-
-    if (this.mobileControlScheme === 'twin-stick') {
-      const aimJoystickCenter = { x: AIM_JOYSTICK_CENTER_X, y: AIM_JOYSTICK_CENTER_Y };
-      this.aimJoystickBase = this.add.graphics();
-      this.aimJoystickBase.fillStyle(0x101713, 0.62).fillCircle(0, 0, JOYSTICK_BASE_RADIUS);
-      this.aimJoystickBase.lineStyle(3, 0x91a9a0, 0.58).strokeCircle(0, 0, JOYSTICK_BASE_RADIUS);
-      this.aimJoystickBase.lineStyle(1, 0x5f7770, 0.48).strokeCircle(0, 0, JOYSTICK_RING_RADIUS);
-      this.aimJoystickBase.setPosition(aimJoystickCenter.x, aimJoystickCenter.y);
-      this.aimJoystickBase.setAlpha(JOYSTICK_BASE_IDLE_ALPHA);
-
-      this.aimJoystickThumb = this.add.graphics();
-      this.aimJoystickThumb.fillStyle(0x6f9c91, 0.84).fillCircle(0, 0, JOYSTICK_THUMB_RADIUS);
-      this.aimJoystickThumb.lineStyle(3, 0xb7d7c3, 0.72).strokeCircle(0, 0, JOYSTICK_THUMB_RADIUS);
-      this.aimJoystickThumb.setPosition(aimJoystickCenter.x, aimJoystickCenter.y);
-      this.aimJoystickThumb.setAlpha(JOYSTICK_THUMB_IDLE_ALPHA);
-      controls.add([this.aimJoystickBase, this.aimJoystickThumb]);
+    if (this.touchEnabled) {
+      window.addEventListener('last-light:mobile-control', this.handleMobileControl);
+      window.addEventListener('last-light:mobile-orientation', this.handleMobileOrientation);
+      this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+        window.removeEventListener('last-light:mobile-control', this.handleMobileControl);
+        window.removeEventListener('last-light:mobile-orientation', this.handleMobileOrientation);
+      });
+      this.handleMobileOrientation(new CustomEvent('last-light:mobile-orientation', {
+        detail: {
+          portrait: window.matchMedia('(max-width: 720px) and (orientation: portrait)').matches,
+        },
+      }));
+      window.dispatchEvent(new CustomEvent('last-light:mobile-visibility', {
+        detail: { visible: !this.isPaused },
+      }));
     }
-
-    const makeActionIcon = (x: number, y: number, kind: 'pause' | 'flare' | 'open') => {
-      const iconKey = kind === 'pause'
-        ? 'mobile-pause-icon'
-        : kind === 'flare'
-          ? 'mobile-flare-icon'
-          : 'mobile-open-icon';
-      return this.add.image(x, y, iconKey).setOrigin(0.5);
-    };
-
-    const actionButton = (
-      x: number,
-      y: number,
-      label: string,
-      borderColor: number,
-      action: () => void,
-      fontSize = '13px',
-      iconKind?: 'pause' | 'flare' | 'open',
-      target: Phaser.GameObjects.Container = controls,
-    ) => {
-      const button = this.add.graphics().setPosition(x, y);
-      const buttonRadius = iconKind === 'pause' ? MOBILE_PAUSE_RADIUS : MOBILE_ACTION_RADIUS;
-      const buttonHitRadius = iconKind === 'pause' ? MOBILE_PAUSE_HIT_RADIUS : MOBILE_ACTION_HIT_RADIUS;
-      button.setInteractive(
-        new Phaser.Geom.Rectangle(
-          -buttonHitRadius,
-          -buttonHitRadius,
-          buttonHitRadius * 2,
-          buttonHitRadius * 2,
-        ),
-        Phaser.Geom.Rectangle.Contains,
-      );
-      const halfSize = buttonRadius;
-      const cornerCut = iconKind === 'pause' ? 6 : 10;
-      const borderPoints = [
-        { x: -halfSize + cornerCut, y: -halfSize },
-        { x: halfSize - cornerCut, y: -halfSize },
-        { x: halfSize, y: -halfSize + cornerCut },
-        { x: halfSize, y: halfSize - cornerCut },
-        { x: halfSize - cornerCut, y: halfSize },
-        { x: -halfSize + cornerCut, y: halfSize },
-        { x: -halfSize, y: halfSize - cornerCut },
-        { x: -halfSize, y: -halfSize + cornerCut },
-      ];
-      const drawBorder = (color: number, width: number, alpha: number) => {
-        button.clear().lineStyle(width, color, alpha).strokePoints(borderPoints, true);
-      };
-      const chargeFill = iconKind === 'flare'
-        ? this.add.graphics().setPosition(x, y)
-        : undefined;
-      let available = true;
-      let active = false;
-      let loadingProgress = 0;
-      const drawChargeFill = () => {
-        chargeFill?.clear();
-        if (!chargeFill || loadingProgress <= 0) return;
-        const innerHalf = buttonRadius - 5;
-        const fillHeight = innerHalf * 2 * loadingProgress;
-        chargeFill
-          .fillStyle(0xe55a45, available ? 0.58 : 0.4)
-          .fillRect(-innerHalf, innerHalf - fillHeight, innerHalf * 2, fillHeight);
-      };
-      const updateVisualState = () => {
-        drawBorder(
-          available && active ? 0xffe2b5 : borderColor,
-          available && active ? 3 : 2,
-          available ? (active ? 1 : 0.9) : 0.3,
-        );
-        button.setAlpha(available ? 1 : 0.45);
-        content.setAlpha(available ? (active ? 1 : 0.92) : 0.28);
-        drawChargeFill();
-      };
-      const content = iconKind
-        ? makeActionIcon(x, y, iconKind)
-        : this.add.text(x, y, label, {
-          fontFamily: '"Share Tech Mono", monospace',
-          fontSize,
-          color: '#fff0d5',
-          align: 'center',
-      }).setOrigin(0.5);
-      const setRestingState = () => {
-        active = false;
-        updateVisualState();
-      };
-      const setActiveState = () => {
-        active = true;
-        updateVisualState();
-      };
-      const setAvailable = (nextAvailable: boolean, progress = 0) => {
-        available = nextAvailable;
-        loadingProgress = progress;
-        updateVisualState();
-      };
-      updateVisualState();
-      button.on('pointerdown', () => {
-        setActiveState();
-        action();
-      });
-      button.on('pointerup', () => {
-        setRestingState();
-      });
-      button.on('pointerover', setActiveState);
-      button.on('pointerout', () => {
-        setRestingState();
-      });
-      if (iconKind === 'flare') this.mobileActionAvailability.flare = setAvailable;
-      if (iconKind === 'open') this.mobileActionAvailability.interact = setAvailable;
-      if (chargeFill) target.add(chargeFill);
-      target.add(button);
-      target.add(content);
-    };
-
-    actionButton(
-      this.mobileActionPositions.interact.x,
-      this.mobileActionPositions.interact.y,
-      'OPEN',
-      0x8b9a6b,
-      () => this.supplies?.interact(),
-      '13px',
-      'open',
-    );
-    actionButton(
-      this.mobileActionPositions.flare.x,
-      this.mobileActionPositions.flare.y,
-      'FLARE',
-      0xe55a45,
-      () => this.flares?.fire(this.currentAimAngle(), this.time.now),
-      '13px',
-      'flare',
-    );
-    actionButton(
-      this.mobileActionPositions.pause.x,
-      this.mobileActionPositions.pause.y,
-      '',
-      0xe2c690,
-      () => this.togglePause(),
-      '13px',
-      'pause',
-      pauseControl,
-    );
-    this.mobileControls = controls;
-    this.mobilePauseControl = pauseControl;
   }
 
   private makeOverlayButton(
@@ -3000,183 +2807,24 @@ export class ArenaScene extends Phaser.Scene {
       ]);
     }
     this.input.mouse?.disableContextMenu();
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (this.sound.locked) this.sound.unlock?.();
-      if (!this.touchEnabled || this.isPaused || this.isGameOver || this.isTouchActionPoint(pointer.worldX, pointer.worldY)) return;
-
-      if (pointer.worldX < WIDTH / 2) {
-        if (this.touchMovePointerId !== null) return;
-        this.touchMovePointerId = pointer.id;
-        this.touchMoveCenter = { x: pointer.worldX, y: pointer.worldY };
-        this.joystickBase?.setPosition(pointer.worldX, pointer.worldY);
-        this.joystickThumb?.setPosition(pointer.worldX, pointer.worldY);
-        this.updateTouchMovement(pointer);
-        return;
-      }
-
-      if (this.mobileControlScheme === 'twin-stick') {
-        if (this.touchAimPointerId !== null) return;
-        this.touchAimPointerId = pointer.id;
-        this.touchAimCenter = { x: pointer.worldX, y: pointer.worldY };
-        this.touchAimStart = { x: pointer.worldX, y: pointer.worldY };
-        this.touchAimDragged = false;
-        this.touchAimFiring = false;
-        this.aimJoystickBase?.setPosition(pointer.worldX, pointer.worldY);
-        this.aimJoystickThumb?.setPosition(pointer.worldX, pointer.worldY);
-        return;
-      }
-
-      if (this.touchAimPointerId !== null) return;
-      this.touchAimPointerId = pointer.id;
-      this.touchAimStart = { x: pointer.worldX, y: pointer.worldY };
-      this.touchAimDragged = false;
-      this.touchAimFiring = false;
-      this.updateTouchAim(pointer);
-    });
-    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.id === this.touchMovePointerId) this.updateTouchMovement(pointer);
-      if (pointer.id === this.touchAimPointerId) {
-        const dragged = Phaser.Math.Distance.Between(
-          this.touchAimStart.x,
-          this.touchAimStart.y,
-          pointer.worldX,
-          pointer.worldY,
-        ) > TOUCH_TAP_SLOP;
-        if (this.mobileControlScheme === 'twin-stick') {
-          if (dragged || this.touchAimDragged) {
-            if (dragged) this.touchAimDragged = true;
-            this.updateTouchAimMovement(pointer);
-          }
-        } else {
-          this.updateTouchAim(pointer);
-          if (dragged) this.touchAimDragged = true;
-        }
-      }
-    });
-    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => this.releaseTouch(pointer));
-    this.input.on('pointerupoutside', (pointer: Phaser.Input.Pointer) => this.releaseTouch(pointer));
-  }
-
-  private releaseTouch(pointer: Phaser.Input.Pointer): void {
-    if (pointer.id === this.touchMovePointerId) {
-      this.touchMovePointerId = null;
-      this.touchMove = { x: 0, y: 0 };
-      this.resetJoystick();
-    }
-    if (pointer.id === this.touchAimPointerId) {
-      this.updateTouchAim(pointer);
-      const draggedOnRelease = Phaser.Math.Distance.Between(
-        this.touchAimStart.x,
-        this.touchAimStart.y,
-        pointer.worldX,
-        pointer.worldY,
-      ) > TOUCH_TAP_SLOP;
-      const aimTapped = !this.touchAimDragged && !draggedOnRelease;
-      if (this.mobileControlScheme === 'twin-stick') {
-        if (draggedOnRelease) {
-          this.touchAimDragged = true;
-          this.updateTouchAimMovement(pointer);
-        }
-        this.touchAimPointerId = null;
-        this.touchAimFiring = false;
-        this.resetAimJoystick();
-      }
-      if (this.mobileControlScheme !== 'twin-stick'
-        && !this.touchAimDragged && !this.isPaused && !this.isGameOver
-        && this.actor(this.localPlayerId)?.alive) {
-        this.shoot(this.currentAimAngle(), this.time.now);
-      }
-      if (this.mobileControlScheme === 'twin-stick'
-        && aimTapped && !this.isPaused && !this.isGameOver
-        && this.actor(this.localPlayerId)?.alive) {
-        this.shoot(this.currentAimAngle(), this.time.now);
-      }
-      if (this.mobileControlScheme !== 'twin-stick') this.touchAimPointerId = null;
-    }
-  }
-
-  private updateTouchMovement(pointer: Phaser.Input.Pointer): void {
-    const radius = JOYSTICK_MOVE_RADIUS;
-    const dx = pointer.worldX - this.touchMoveCenter.x;
-    const dy = pointer.worldY - this.touchMoveCenter.y;
-    const distance = Math.hypot(dx, dy);
-    const scale = distance > radius ? radius / distance : 1;
-    this.touchMove = {
-      x: (dx * scale) / radius,
-      y: (dy * scale) / radius,
-    };
-    this.joystickBase?.setAlpha(JOYSTICK_BASE_ACTIVE_ALPHA);
-    this.joystickThumb?.setAlpha(JOYSTICK_THUMB_ACTIVE_ALPHA);
-    this.joystickThumb?.setPosition(
-      this.touchMoveCenter.x + dx * scale,
-      this.touchMoveCenter.y + dy * scale,
-    );
-  }
-
-  private resetJoystick(): void {
-    this.touchMoveCenter = { x: JOYSTICK_CENTER_X, y: JOYSTICK_CENTER_Y };
-    this.joystickBase?.setAlpha(JOYSTICK_BASE_IDLE_ALPHA);
-    this.joystickThumb?.setAlpha(JOYSTICK_THUMB_IDLE_ALPHA);
-    this.joystickBase?.setPosition(this.touchMoveCenter.x, this.touchMoveCenter.y);
-    this.joystickThumb?.setPosition(this.touchMoveCenter.x, this.touchMoveCenter.y);
-  }
-
-  private updateTouchAimMovement(pointer: Phaser.Input.Pointer): void {
-    const radius = JOYSTICK_MOVE_RADIUS;
-    const dx = pointer.worldX - this.touchAimCenter.x;
-    const dy = pointer.worldY - this.touchAimCenter.y;
-    const distance = Math.hypot(dx, dy);
-    const scale = distance > radius ? radius / distance : 1;
-    if (distance > 8) {
-      this.touchAimVector = { x: dx / distance, y: dy / distance };
-    }
-    this.touchAimFiring = distance > AIM_JOYSTICK_FIRE_DEAD_ZONE;
-    this.aimJoystickBase?.setAlpha(JOYSTICK_BASE_ACTIVE_ALPHA);
-    this.aimJoystickThumb?.setAlpha(JOYSTICK_THUMB_ACTIVE_ALPHA);
-    this.aimJoystickThumb?.setPosition(
-      this.touchAimCenter.x + dx * scale,
-      this.touchAimCenter.y + dy * scale,
-    );
-  }
-
-  private resetAimJoystick(): void {
-    this.touchAimCenter = { x: AIM_JOYSTICK_CENTER_X, y: AIM_JOYSTICK_CENTER_Y };
-    this.aimJoystickBase?.setAlpha(JOYSTICK_BASE_IDLE_ALPHA);
-    this.aimJoystickThumb?.setAlpha(JOYSTICK_THUMB_IDLE_ALPHA);
-    this.aimJoystickBase?.setPosition(this.touchAimCenter.x, this.touchAimCenter.y);
-    this.aimJoystickThumb?.setPosition(this.touchAimCenter.x, this.touchAimCenter.y);
-    this.touchAimFiring = false;
-  }
-
-  private updateMobileControlState(time: number): void {
-    this.mobileActionAvailability.flare?.(this.flares.canFire(time), this.flares.chargeProgress(time));
-    this.mobileActionAvailability.interact?.(this.supplies.canInteract());
-  }
-
-  private updateTouchAim(pointer: Phaser.Input.Pointer): void {
-    this.touchAim = { x: pointer.worldX, y: pointer.worldY };
-  }
-
-  private isTouchActionPoint(x: number, y: number): boolean {
-    const actionPositions = this.mobileControlScheme === 'twin-stick'
-      ? Object.values(this.mobileActionPositions)
-      : [
-        this.mobileActionPositions.pause,
-        this.mobileActionPositions.flare,
-        this.mobileActionPositions.interact,
-      ];
-    return actionPositions.some((position) =>
-      Phaser.Math.Distance.Between(x, y, position.x, position.y) <= position.hitRadius);
   }
 
   private currentAimAngle(): number {
     const pointer = this.input.activePointer;
-    if (this.touchEnabled && this.mobileControlScheme === 'twin-stick') {
+    if (this.touchEnabled) {
       return Math.atan2(this.touchAimVector.y, this.touchAimVector.x);
     }
-    const aimX = this.touchEnabled ? this.touchAim.x : pointer.worldX;
-    const aimY = this.touchEnabled ? this.touchAim.y : pointer.worldY;
-    return Phaser.Math.Angle.Between(this.player.x, this.player.y, aimX, aimY);
+    return Phaser.Math.Angle.Between(this.player.x, this.player.y, pointer.worldX, pointer.worldY);
+  }
+
+  private updateMobileControlState(time: number): void {
+    if (!this.touchEnabled) return;
+    window.dispatchEvent(new CustomEvent('last-light:mobile-availability', {
+      detail: {
+        flare: this.flares.canFire(time),
+        interact: this.supplies.canInteract(),
+      },
+    }));
   }
 
   private findAimLaserEndpoint(angle: number, length: number): TouchVector {
@@ -3230,11 +2878,12 @@ export class ArenaScene extends Phaser.Scene {
     if (this.isDuo && this.isNetworkClient) return;
     this.isPaused = !this.isPaused;
     this.pauseMenu.setVisible(this.isPaused);
-    this.crosshair.setVisible(!this.isPaused);
+    this.crosshair.setVisible(!this.isPaused && !this.touchEnabled);
     if (this.isDuo) this.duoOptions?.session.sendPause(this.isPaused);
-    this.aimLaser.setVisible(!this.isPaused);
-    this.mobileControls?.setVisible(!this.isPaused);
-    this.mobilePauseControl?.setVisible(!this.isPaused && !this.isGameOver);
+    this.aimLaser.setVisible(!this.isPaused && this.touchEnabled);
+    window.dispatchEvent(new CustomEvent('last-light:mobile-visibility', {
+      detail: { visible: !this.isPaused && !this.isGameOver },
+    }));
 
     if (this.isPaused) {
       this.pausedAt = this.time.now;
@@ -3416,26 +3065,30 @@ export class ArenaScene extends Phaser.Scene {
   update(time) {
     const pointer = this.input.activePointer;
     const aimAngle = this.currentAimAngle();
-    const laserLength = Math.max(WIDTH, HEIGHT);
-    const laserEnd = this.findAimLaserEndpoint(aimAngle, laserLength);
-    this.aimLaser.clear();
-    const laserDistance = Phaser.Math.Distance.Between(this.player.x, this.player.y, laserEnd.x, laserEnd.y);
-    const laserSegments = Math.max(1, Math.ceil(laserDistance / 40));
-    for (let segment = 0; segment < laserSegments; segment += 1) {
-      const start = segment / laserSegments;
-      const end = (segment + 1) / laserSegments;
-      const fade = 1 - start * 0.94;
-      const startX = Phaser.Math.Interpolation.Linear([this.player.x, laserEnd.x], start);
-      const startY = Phaser.Math.Interpolation.Linear([this.player.y, laserEnd.y], start);
-      const endX = Phaser.Math.Interpolation.Linear([this.player.x, laserEnd.x], end);
-      const endY = Phaser.Math.Interpolation.Linear([this.player.y, laserEnd.y], end);
-      this.aimLaser
-        .lineStyle(4, 0xff2020, 0.06 * fade)
-        .lineBetween(startX, startY, endX, endY)
-        .lineStyle(1, 0xff3d3d, 0.28 * fade)
-        .lineBetween(startX, startY, endX, endY)
-        .lineStyle(1, 0xffa0a0, 0.42 * fade)
-        .lineBetween(startX, startY, endX, endY);
+    if (this.touchEnabled) {
+      const laserLength = Math.max(WIDTH, HEIGHT);
+      const laserEnd = this.findAimLaserEndpoint(aimAngle, laserLength);
+      this.aimLaser.clear();
+      const laserDistance = Phaser.Math.Distance.Between(this.player.x, this.player.y, laserEnd.x, laserEnd.y);
+      const laserSegments = Math.max(1, Math.ceil(laserDistance / 40));
+      for (let segment = 0; segment < laserSegments; segment += 1) {
+        const start = segment / laserSegments;
+        const end = (segment + 1) / laserSegments;
+        const fade = 1 - start * 0.94;
+        const startX = Phaser.Math.Interpolation.Linear([this.player.x, laserEnd.x], start);
+        const startY = Phaser.Math.Interpolation.Linear([this.player.y, laserEnd.y], start);
+        const endX = Phaser.Math.Interpolation.Linear([this.player.x, laserEnd.x], end);
+        const endY = Phaser.Math.Interpolation.Linear([this.player.y, laserEnd.y], end);
+        this.aimLaser
+          .lineStyle(4, 0xff2020, 0.06 * fade)
+          .lineBetween(startX, startY, endX, endY)
+          .lineStyle(1, 0xff3d3d, 0.28 * fade)
+          .lineBetween(startX, startY, endX, endY)
+          .lineStyle(1, 0xffa0a0, 0.42 * fade)
+          .lineBetween(startX, startY, endX, endY);
+      }
+    } else {
+      this.crosshair.setPosition(Math.round(pointer.worldX), Math.round(pointer.worldY));
     }
 
     if (import.meta.env.DEV && Phaser.Input.Keyboard.JustDown(this.keys.debug!)) {
@@ -3485,8 +3138,8 @@ export class ArenaScene extends Phaser.Scene {
       - Number(this.keys.left.isDown || this.keys.leftAlt.isDown);
     const keyboardVertical = Number(this.keys.down.isDown || this.keys.downAlt.isDown)
       - Number(this.keys.up.isDown || this.keys.upAlt.isDown);
-    const horizontal = this.touchMovePointerId === null ? keyboardHorizontal : this.touchMove.x;
-    const vertical = this.touchMovePointerId === null ? keyboardVertical : this.touchMove.y;
+    const horizontal = this.touchMoveActive ? this.touchMove.x : keyboardHorizontal;
+    const vertical = this.touchMoveActive ? this.touchMove.y : keyboardVertical;
     const aim = aimAngle;
     this.updateActorMotion(localActor, { moveX: horizontal, moveY: vertical, aim }, time);
     this.health = localActor.health;
@@ -3502,7 +3155,7 @@ export class ArenaScene extends Phaser.Scene {
       this.lastShot = time;
       this.shootForActor(localActor, aim, time);
     }
-    if (this.touchEnabled && this.mobileControlScheme === 'twin-stick'
+    if (this.touchEnabled
       && this.touchAimFiring
       && time - this.lastShot >= this.supplies.fireInterval(time)) {
       this.shoot(aim, time);
@@ -4648,60 +4301,18 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
 
-  private getShadowGraphicBounds(textureKey: string, frame: Phaser.Textures.Frame): { width: number; height: number } {
-    const cacheKey = `${textureKey}:${frame.name}`;
-    const cached = this.shadowGraphicBounds.get(cacheKey);
-    if (cached) return cached;
-
-    const width = Math.max(1, frame.width);
-    const height = Math.max(1, frame.height);
-    let minX = width;
-    let minY = height;
-    let maxX = -1;
-    let maxY = -1;
-    for (let y = 0; y < height; y += 1) {
-      for (let x = 0; x < width; x += 1) {
-        if (this.textures.getPixelAlpha(x, y, textureKey, frame.name) <= 12) continue;
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
-      }
-    }
-
-    const bounds = maxX < 0
-      ? { width, height }
-      : { width: maxX - minX + 1, height: maxY - minY + 1 };
-    this.shadowGraphicBounds.set(cacheKey, bounds);
-    return bounds;
-  }
-
   private collectShadowCasters(): ShadowCaster[] {
     const casters: ShadowCaster[] = [];
     const addBody = (gameObject: Phaser.GameObjects.GameObject & {
       active: boolean;
-      x: number;
-      y: number;
-      displayWidth: number;
-      displayHeight: number;
-      texture: Phaser.Textures.Texture;
-      frame: Phaser.Textures.Frame;
-      rotation: number;
       body?: Phaser.Physics.Arcade.Body | Phaser.Physics.Arcade.StaticBody | null;
     }) => {
       const body = gameObject.body;
       if (!gameObject.active || !body?.enable) return;
-      const graphicBounds = this.getShadowGraphicBounds(gameObject.texture.key, gameObject.frame);
       casters.push({
-        x: gameObject.x,
-        y: gameObject.y,
-        halfWidth: Math.max(3, gameObject.displayWidth * graphicBounds.width / gameObject.frame.width / 2),
-        halfHeight: Math.max(3, gameObject.displayHeight * graphicBounds.height / gameObject.frame.height / 2),
-        displayWidth: gameObject.displayWidth,
-        displayHeight: gameObject.displayHeight,
-        rotation: gameObject.rotation,
-        textureKey: gameObject.texture.key,
-        frameName: gameObject.frame.name,
+        x: body.center.x,
+        y: body.center.y,
+        radius: Math.max(6, body.halfWidth, body.halfHeight),
       });
     };
 
@@ -4718,13 +4329,11 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private playerLightSources(): PlayerLight[] {
-    const localBeamLength = this.currentDesktopAimDistance();
     return [...this.playerActors.values()].map((actor) => ({
       x: actor.sprite.x,
       y: actor.sprite.y,
       aimAngle: actor.aim,
       active: actor.alive && actor.health > 0,
-      beamLength: actor.id === this.localPlayerId ? localBeamLength : undefined,
     }));
   }
 
@@ -5044,8 +4653,7 @@ export class ArenaScene extends Phaser.Scene {
     const shadow = this.add.image(x + 3, y + 6, 'soft-shadow')
       .setDepth(1)
       .setDisplaySize(definition.shadowWidth, definition.shadowHeight)
-      .setAlpha(0)
-      .setVisible(false);
+      .setAlpha(0);
     const aura = this.add.image(x, y, 'glow')
       .setDepth(16)
       .setScale(kind === 'furnace' ? 0.98 : 0.72)
@@ -5154,8 +4762,7 @@ export class ArenaScene extends Phaser.Scene {
     const shadow = this.add.image(x + 2, y + (type.name === 'crawler' ? 10 : 3), 'soft-shadow')
       .setDepth(1)
       .setDisplaySize(type.shadowWidth * type.scale, type.shadowHeight * type.scale)
-      .setAlpha(0)
-      .setVisible(false);
+      .setAlpha(0);
     const aura = type.name === 'charred'
       ? this.add.image(x, y, 'glow')
         .setDepth(16)
@@ -5551,9 +5158,13 @@ export class ArenaScene extends Phaser.Scene {
   gameOver(message?: string) {
     if (this.isGameOver) return;
     this.isGameOver = true;
+    this.crosshair.setVisible(false);
     this.aimLaser.setVisible(false);
-    this.mobileControls?.setVisible(false);
-    this.mobilePauseControl?.setVisible(false);
+    if (this.touchEnabled) {
+      window.dispatchEvent(new CustomEvent('last-light:mobile-visibility', {
+        detail: { visible: false },
+      }));
+    }
     const survivalMs = this.getSurvivalMs();
     const disconnection = message?.startsWith('CONNECTION LOST') ?? false;
     window.dispatchEvent(new CustomEvent('last-light:game-over', {
