@@ -11,6 +11,10 @@ interface SupplyHooks {
   repairOutpost: () => void;
   announce: (title: string, subtitle: string) => void;
   isGameOver: () => boolean;
+  emitNetworkEvent?: (
+    type: 'supply-drop' | 'supply-ready' | 'supply-opened',
+    payload: Record<string, unknown>,
+  ) => void;
 }
 
 type DropState = 'waiting' | 'descending' | 'ready' | 'opened';
@@ -23,7 +27,8 @@ export class SupplySystem {
   private readonly landingLabel: Phaser.GameObjects.Text;
   private readonly prompt: Phaser.GameObjects.Text;
   private state: DropState = 'waiting';
-  private adrenalineUntil = 0;
+  private readonly adrenalineUntil = new Map<Phaser.Physics.Arcade.Sprite, number>();
+  private readonly players: Phaser.Physics.Arcade.Sprite[];
   private cache?: Phaser.GameObjects.Image;
   private cacheShadow?: Phaser.GameObjects.Ellipse;
   private cacheBeaconGlow?: Phaser.GameObjects.Image;
@@ -38,9 +43,12 @@ export class SupplySystem {
     private readonly player: Phaser.Physics.Arcade.Sprite,
     private readonly hooks: SupplyHooks,
   ) {
+    this.players = [player];
     this.interactKey = scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E);
     this.pickups = scene.physics.add.group();
-    scene.physics.add.overlap(player, this.pickups, (_player, pickup) => this.collect(pickup as any));
+    scene.physics.add.overlap(player, this.pickups, (collector, pickup) => {
+      this.collect(pickup as any, collector as Phaser.Physics.Arcade.Sprite);
+    });
 
     this.landingZone = scene.add.graphics({ x: this.dropX, y: this.dropY })
       .setDepth(2)
@@ -76,6 +84,42 @@ export class SupplySystem {
     scene.time.delayedCall(66000, () => this.beginDrop());
   }
 
+  addPlayer(player: Phaser.Physics.Arcade.Sprite): void {
+    this.players.push(player);
+    this.scene.physics.add.overlap(
+      player,
+      this.pickups,
+      (collector, pickup) => this.collect(pickup as any, collector as Phaser.Physics.Arcade.Sprite),
+    );
+  }
+
+  interact(player: Phaser.Physics.Arcade.Sprite): void {
+    const canOpen = this.state === 'ready'
+      && !!this.cache
+      && Phaser.Math.Distance.Between(player.x, player.y, this.cache.x, this.cache.y) <= 58;
+    if (canOpen) this.openDrop();
+  }
+
+  networkState(): {
+    state: DropState;
+    cache?: { x: number; y: number; textureKey: string };
+    pickup?: { kind: string; x: number; y: number };
+  } {
+    return {
+      state: this.state,
+      cache: this.cache
+        ? { x: this.cache.x, y: this.cache.y, textureKey: this.cache.texture.key }
+        : undefined,
+      pickup: this.activePickup?.active
+        ? {
+          kind: String(this.activePickup.getData('kind') ?? 'medkit'),
+          x: this.activePickup.x,
+          y: this.activePickup.y,
+        }
+        : undefined,
+    };
+  }
+
   update(time: number): void {
     if (this.hooks.isGameOver()) {
       this.prompt.setVisible(false);
@@ -88,28 +132,32 @@ export class SupplySystem {
     this.prompt.setVisible(canOpen);
     if (canOpen && Phaser.Input.Keyboard.JustDown(this.interactKey)) this.openDrop();
 
-    if (time < this.adrenalineUntil) {
-      this.player.setTint(0xffd18a);
-    } else if (this.player.tintTopLeft === 0xffd18a) {
-      this.player.clearTint();
-    }
+    this.players.forEach((player) => {
+      if (time < (this.adrenalineUntil.get(player) ?? 0)) player.setTint(0xffd18a);
+      else if (player.tintTopLeft === 0xffd18a) player.clearTint();
+    });
   }
 
-  movementMultiplier(time: number): number {
-    return time < this.adrenalineUntil ? 1.22 : 1;
+  movementMultiplier(time: number, player = this.player): number {
+    return time < (this.adrenalineUntil.get(player) ?? 0) ? 1.22 : 1;
   }
 
-  fireInterval(time: number): number {
-    return time < this.adrenalineUntil ? 78 : 105;
+  fireInterval(time: number, player = this.player): number {
+    return time < (this.adrenalineUntil.get(player) ?? 0) ? 78 : 105;
   }
 
-  adrenalineRemaining(time: number): number {
-    return Math.max(0, this.adrenalineUntil - time);
+  adrenalineRemaining(time: number, player = this.player): number {
+    return Math.max(0, (this.adrenalineUntil.get(player) ?? 0) - time);
   }
 
   private beginDrop(): void {
     if (this.hooks.isGameOver()) return;
     this.state = 'descending';
+    this.hooks.emitNetworkEvent?.('supply-drop', {
+      x: this.dropX,
+      y: this.dropY,
+      duration: 1050,
+    });
     this.hooks.announce('SUPPLY DROP INBOUND', 'LOCATE THE DROP • PRESS E TO OPEN');
 
     const incomingShadow = this.scene.add.ellipse(this.dropX, this.dropY + 7, 38, 18, 0x000000, 0.36)
@@ -138,6 +186,11 @@ export class SupplySystem {
         this.cache = incomingCache;
         this.cacheShadow = incomingShadow;
         this.state = 'ready';
+        this.hooks.emitNetworkEvent?.('supply-ready', {
+          x: this.dropX,
+          y: this.dropY,
+          textureKey: this.cache.texture.key,
+        });
         this.landingLabel.setText('SUPPLY READY');
         this.landingZone.setVisible(true);
         this.landingLabel.setVisible(true);
@@ -163,6 +216,11 @@ export class SupplySystem {
     this.cache.setTexture('supply-cache-open');
     this.scene.tweens.add({ targets: this.cache, scaleY: 1.08, duration: 80, yoyo: true });
     const kind = this.choosePickupKind();
+    this.hooks.emitNetworkEvent?.('supply-opened', {
+      kind,
+      x: this.cache.x,
+      y: this.cache.y - 8,
+    });
     this.landingLabel.setText(kind === 'medkit'
       ? 'MEDKIT READY'
       : kind === 'repair'
@@ -290,7 +348,7 @@ export class SupplySystem {
     });
   }
 
-  private collect(pickup: any): void {
+  private collect(pickup: any, player: Phaser.Physics.Arcade.Sprite): void {
     if (!pickup.active || this.hooks.isGameOver()) return;
     const kind = pickup.getData('kind');
     if (kind === 'medkit' && this.hooks.getHealth() >= 100) return;
@@ -308,7 +366,7 @@ export class SupplySystem {
       this.hooks.addFlare();
       this.hooks.announce('FLARE CARTRIDGE', 'AERIAL FLARE CHARGE ADDED');
     } else {
-      this.adrenalineUntil = this.scene.time.now + 10000;
+      this.players.forEach((target) => this.adrenalineUntil.set(target, this.scene.time.now + 10000));
       this.hooks.announce('ADRENALINE ACTIVE', 'MOVEMENT AND FIRE RATE INCREASED');
     }
     this.clearDrop();

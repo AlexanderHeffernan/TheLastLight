@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import type { DuoMonsterVoiceEvent, DuoSoundEffect } from '../network/protocol';
 
 export type MonsterType = 'shambler' | 'runner' | 'crawler' | 'brute' | 'charred'
   | 'breaker' | 'lurker' | 'furnace' | 'spitter';
@@ -71,7 +72,10 @@ export class MonsterAudioSystem {
   private noise?: AudioBuffer;
   private paused = false;
 
-  constructor(private readonly scene: Phaser.Scene) {
+  constructor(
+    private readonly scene: Phaser.Scene,
+    private readonly options: { onSound?: (sound: DuoSoundEffect) => void } = {},
+  ) {
     scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.destroy());
   }
 
@@ -82,7 +86,11 @@ export class MonsterAudioSystem {
     y: number,
     listenerX: number,
     listenerY: number,
+    replicate = true,
   ): boolean {
+    if (replicate) {
+      this.options.onSound?.({ kind: 'monster', monsterType: type, event, x, y });
+    }
     const context = this.context();
     const apex = type === 'breaker' || type === 'lurker' || type === 'furnace' || type === 'spitter';
     const voiceLimit = apex
@@ -176,6 +184,16 @@ export class MonsterAudioSystem {
     return true;
   }
 
+  playNetworkSound(sound: Record<string, unknown>, listenerX: number, listenerY: number): void {
+    const type = String(sound.monsterType ?? '');
+    const event = String(sound.event ?? '') as DuoMonsterVoiceEvent;
+    if (!isMonsterType(type) || !isMonsterVoiceEvent(event)) return;
+    const x = Number(sound.x);
+    const y = Number(sound.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    this.play(type, event, x, y, listenerX, listenerY, false);
+  }
+
   setPaused(paused: boolean): void {
     this.paused = paused;
     const context = this.context();
@@ -237,4 +255,12 @@ export class MonsterAudioSystem {
     this.noise = undefined;
     this.activeVoices = 0;
   }
+}
+
+function isMonsterType(value: string): value is MonsterType {
+  return value in PROFILES;
+}
+
+function isMonsterVoiceEvent(value: string): value is MonsterVoiceEvent {
+  return value === 'spawn' || value === 'ambient' || value === 'hurt' || value === 'attack' || value === 'death';
 }

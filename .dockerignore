@@ -1,7 +1,6 @@
 .git
 .github
 .DS_Store
-art-source
 dist
 node_modules
 npm-debug.log*

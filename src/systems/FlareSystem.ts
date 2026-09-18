@@ -6,9 +6,14 @@ import type { LightingSystem } from './LightingSystem';
 interface FlareHooks {
   isGeneratorOnline: () => boolean;
   isGeneratorUnstable: () => boolean;
+  isPlayerAlive: () => boolean;
   isGameOver: () => boolean;
   announce: (title: string, subtitle: string) => void;
   setGeneratorStatus: (status: string) => void;
+  emitNetworkEvent?: (
+    type: 'flare-cartridge' | 'flare-collected' | 'flare-launch' | 'flare-ignite',
+    payload: Record<string, unknown>,
+  ) => void;
 }
 
 export class FlareSystem {
@@ -25,7 +30,8 @@ export class FlareSystem {
   private activeUntil = 0;
   private launching = false;
   private pendingCartridge?: Phaser.Physics.Arcade.Image;
-  private pendingOverlap?: Phaser.Physics.Arcade.Collider;
+  private pendingOverlaps: Phaser.Physics.Arcade.Collider[] = [];
+  private readonly players: Phaser.Physics.Arcade.Sprite[];
   private lastInventoryLabel = '';
   private lastDetailLabel = '';
   private lastGeneratorLabel = '';
@@ -37,6 +43,7 @@ export class FlareSystem {
     private readonly audio: AudioSystem,
     private readonly hooks: FlareHooks,
   ) {
+    this.players = [player];
     this.key = scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.F);
     const textStyle = {
       fontFamily: '"Share Tech Mono", monospace',
@@ -73,7 +80,7 @@ export class FlareSystem {
       }
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.key)) this.fire(aimAngle, time);
+    if (Phaser.Input.Keyboard.JustDown(this.key) && this.hooks.isPlayerAlive()) this.fire(aimAngle, time);
     this.refreshHud();
   }
 
@@ -93,11 +100,34 @@ export class FlareSystem {
     return true;
   }
 
+  launch(angle: number, time: number, origin?: { x: number; y: number }): void {
+    this.fire(angle, time, origin);
+  }
+
+  addPlayer(player: Phaser.Physics.Arcade.Sprite): void {
+    this.players.push(player);
+    if (this.pendingCartridge) this.addCartridgeOverlap(player, this.pendingCartridge);
+  }
+
+  private addCartridgeOverlap(
+    player: Phaser.Physics.Arcade.Sprite,
+    pickup: Phaser.Physics.Arcade.Image,
+  ): void {
+    this.pendingOverlaps.push(this.scene.physics.add.overlap(player, pickup, () => this.collectCartridge()));
+  }
+
   private spawnFabricatedCartridge(): void {
     const startX = GENERATOR_POSITION.x + 20;
     const startY = GENERATOR_POSITION.y + 2;
     const targetX = GENERATOR_POSITION.x + 52;
     const targetY = GENERATOR_POSITION.y + 7;
+    this.hooks.emitNetworkEvent?.('flare-cartridge', {
+      startX,
+      startY,
+      targetX,
+      targetY,
+      duration: 620,
+    });
     const shadow = this.scene.add.ellipse(startX, startY + 7, 20, 9, 0x000000, 0.3)
       .setDepth(2)
       .setScale(0.45);
@@ -122,7 +152,7 @@ export class FlareSystem {
     const body = pickup.body as Phaser.Physics.Arcade.Body;
     body.setCircle(11, 21, 21).setAllowGravity(false);
     this.pendingCartridge = pickup;
-    this.pendingOverlap = this.scene.physics.add.overlap(this.player, pickup, () => this.collectCartridge());
+    this.players.forEach((player) => this.addCartridgeOverlap(player, pickup));
     this.audio.playTone(260, 0.14, 0.035, 'square');
     this.audio.playNoise(0.12, 0.025, 1600);
 
@@ -190,10 +220,11 @@ export class FlareSystem {
     shadow?.destroy();
     glow?.destroy();
     coreGlow?.destroy();
-    this.pendingOverlap?.destroy();
+    this.pendingOverlaps.forEach((overlap) => overlap.destroy());
+    this.pendingOverlaps = [];
     pickup.destroy();
     this.pendingCartridge = undefined;
-    this.pendingOverlap = undefined;
+    this.hooks.emitNetworkEvent?.('flare-collected', {});
     this.charges += 1;
     this.unlocked = true;
     this.audio.playTone(520, 0.13, 0.035, 'triangle');
@@ -201,18 +232,30 @@ export class FlareSystem {
     this.refreshHud();
   }
 
-  private fire(angle: number, time: number): void {
-    if (this.hooks.isGameOver() || this.charges <= 0 || this.launching || time < this.activeUntil) return;
+  private fire(angle: number, time: number, origin: { x: number; y: number } = this.player): void {
+    if (!this.hooks.isPlayerAlive()
+      || this.hooks.isGameOver()
+      || this.charges <= 0
+      || this.launching
+      || time < this.activeUntil) return;
     this.charges -= 1;
     this.launching = true;
     this.audio.playTone(186, 0.42, 0.055, 'sawtooth');
     this.audio.playNoise(0.38, 0.045, 1300);
 
-    const startX = this.player.x + Math.cos(angle) * 28;
-    const startY = this.player.y + Math.sin(angle) * 28;
-    const targetX = Phaser.Math.Clamp(this.player.x + Math.cos(angle) * 175, 110, GAME_WIDTH - 110);
-    const targetY = Phaser.Math.Clamp(this.player.y + Math.sin(angle) * 145, 145, GAME_HEIGHT - 70);
+    const startX = origin.x + Math.cos(angle) * 28;
+    const startY = origin.y + Math.sin(angle) * 28;
+    const targetX = Phaser.Math.Clamp(origin.x + Math.cos(angle) * 175, 110, GAME_WIDTH - 110);
+    const targetY = Phaser.Math.Clamp(origin.y + Math.sin(angle) * 145, 145, GAME_HEIGHT - 70);
     const airborneY = targetY - 92;
+    this.hooks.emitNetworkEvent?.('flare-launch', {
+      startX,
+      startY,
+      targetX,
+      targetY,
+      airborneY,
+      duration: 650,
+    });
     const projectile = this.scene.add.image(startX, startY, 'flare-cartridge')
       .setDepth(23)
       .setRotation(angle)
@@ -248,6 +291,7 @@ export class FlareSystem {
   private ignite(x: number, y: number): void {
     const duration = 14000;
     const airborneY = y - 92;
+    this.hooks.emitNetworkEvent?.('flare-ignite', { x, y: airborneY, duration });
     this.launching = false;
     this.activeUntil = this.scene.time.now + duration;
     this.lighting.igniteAerialFlare(x, airborneY, duration);
