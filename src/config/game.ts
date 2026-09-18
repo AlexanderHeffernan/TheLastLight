@@ -10,9 +10,6 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
   backgroundColor: '#171c18',
   pixelArt: true,
   roundPixels: true,
-  input: {
-    activePointers: 3,
-  },
   physics: {
     default: 'arcade',
     arcade: {
@@ -30,7 +27,6 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
-    expandParent: false,
   },
   render: {
     antialias: false,

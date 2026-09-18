@@ -143,11 +143,10 @@ export class LightingSystem {
         beam.setVisible(false);
         return;
       }
-      beam
-        .setVisible(true)
-        .setPosition(light.x, light.y)
-        .setRotation(light.aimAngle);
-      this.eraseDirectionalLight(light.x, light.y, light.aimAngle, 1, 0.88);
+      beam.setVisible(true).setPosition(light.x, light.y).setRotation(light.aimAngle);
+    });
+    playerLights.forEach((light) => {
+      if (light.active !== false) this.eraseDirectionalLight(light.x, light.y, light.aimAngle, 1, 0.88);
     });
 
     if (!this.generatorDestroyed && this.outpostPower > 0.01) {
@@ -195,15 +194,7 @@ export class LightingSystem {
       this.shadows.beginDraw();
       playerLights.forEach((light) => {
         if (light.active !== false) {
-          this.drawProjectedShadows(
-            light.x,
-            light.y,
-            light.aimAngle,
-            470,
-            0.44,
-            0.82,
-            casters,
-          );
+          this.drawProjectedShadows(light.x, light.y, light.aimAngle, 470, 0.44, 0.82, casters);
         }
       });
       if (!this.generatorDestroyed && this.outpostPower > 0.01) {

@@ -2,9 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#070807" />
-    <meta name="color-scheme" content="dark" />
     <meta name="description" content="Play The Last Light, a free pixel-art top-down survival shooter created by Alexander Heffernan. Hold a floodlit outpost against an endless horde." />
     <meta name="author" content="Alexander Heffernan" />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
@@ -64,14 +63,14 @@
         "codeRepository": "https://github.com/AlexanderHeffernan/TheLastLight"
       }
     </script>
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="apple-touch-icon" href="/favicon.png" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <title>The Last Light</title>
   </head>
   <body>
+    <div id="mobile-notice" class="mobile-notice">
+      <strong>DESKTOP DEPLOYMENT REQUIRED</strong>
+      <p>The Last Light currently requires a keyboard and mouse.</p>
+    </div>
+
     <main id="home" class="home">
       <div class="home-backdrop" aria-hidden="true"></div>
       <img class="home-hero" src="/menu/the_last_light_hero_1920x1080.png" alt="A soldier holds a floodlit outpost against the dead" />
@@ -84,7 +83,7 @@
       <form id="deploy-form" class="home-panel" autocomplete="off">
         <label class="callsign-label" for="callsign">SURVIVOR CALLSIGN</label>
         <div class="callsign-entry">
-          <input id="callsign" name="callsign" maxlength="18" placeholder="ENTER CALLSIGN" autocomplete="off" spellcheck="false" enterkeyhint="done" required />
+          <input id="callsign" name="callsign" maxlength="18" placeholder="ENTER CALLSIGN" autocomplete="off" spellcheck="false" required />
           <div class="callsign-tools" aria-label="Survivor and game mode options">
             <button id="skin-button" class="home-tool-button" type="button" aria-label="Choose survivor skin" title="CHOOSE SURVIVOR SKIN">
               <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5a2.1 2.1 0 1 0-2.1-2.1" /><path d="M12 4.5v3.1l-8.2 5.8c-1 .7-.5 2.1.7 2.1h15c1.2 0 1.7-1.4.7-2.1L12 7.6" /></svg>
@@ -121,13 +120,10 @@
       </aside>
 
       <nav class="home-credits" aria-label="Project links and credits">
-        <button id="changelog-button" class="credit-link" type="button" aria-label="Change log">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3V20.5H6V3.5Zm2 2v13h8V7.5h-2.5V5.5H8Zm1.5 5h5v1.5h-5v-1.5Zm0 3h5V15h-5v-1.5Z" /></svg>
-          <span class="credit-link-label">CHANGE LOG</span>
-        </button>
-        <a class="credit-link" href="https://github.com/AlexanderHeffernan/TheLastLight" target="_blank" rel="noreferrer" aria-label="Open source">
+        <button id="changelog-button" class="credit-link" type="button">CHANGE LOG</button>
+        <a class="credit-link" href="https://github.com/AlexanderHeffernan/TheLastLight" target="_blank" rel="noreferrer">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.29-5.27-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.16 1.18A10.9 10.9 0 0 1 12 6.08c.98 0 1.95.13 2.87.39 2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.84 1.19 3.1 0 4.41-2.71 5.39-5.29 5.68.42.36.78 1.07.78 2.16v3.25c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" /></svg>
-          <span class="credit-link-label">OPEN SOURCE</span>
+          OPEN SOURCE
         </a>
         <a class="contributor" href="https://github.com/AlexanderHeffernan" target="_blank" rel="noreferrer" aria-label="Alexander Heffernan — creator">
           <img src="https://github.com/AlexanderHeffernan.png?size=92" alt="Alexander Heffernan" />
@@ -150,8 +146,8 @@
         <p class="modal-kicker">FIELD MANUAL // 01</p>
         <h2 id="how-to-title">HOW TO SURVIVE</h2>
         <div class="how-to-grid">
-          <article><kbd>WASD<br/>STICK</kbd><div><strong>KEEP MOVING</strong><p>Use WASD, the arrow keys, or the left stick. Standing still is a death sentence.</p></div></article>
-          <article><kbd>MOUSE<br/>TOUCH</kbd><div><strong>AIM & FIRE</strong><p>Aim with the mouse and hold the left button. On touch, use the aim stick to point and fire.</p></div></article>
+          <article><kbd>WASD</kbd><div><strong>KEEP MOVING</strong><p>Use WASD or the arrow keys. Standing still is a death sentence.</p></div></article>
+          <article><kbd>MOUSE</kbd><div><strong>AIM & FIRE</strong><p>Aim with the cursor and hold the left mouse button to fire.</p></div></article>
           <article><kbd>F</kbd><div><strong>AERIAL FLARES</strong><p>The generator fabricates flares. Fire one overhead to reclaim the darkness.</p></div></article>
           <article><kbd>E</kbd><div><strong>SUPPLY DROPS</strong><p>Approach a landed cache and press E to open it.</p></div></article>
           <article><kbd>P / ESC</kbd><div><strong>PAUSE</strong><p>Pause the operation whenever you need a moment.</p></div></article>
@@ -213,34 +209,8 @@
       </div>
     </section>
 
-    <div id="orientation-notice" class="orientation-notice hidden" aria-live="polite">
-      <strong>TURN DEVICE SIDEWAYS</strong>
-      <span>LANDSCAPE FIELD REQUIRED</span>
-    </div>
-
     <main id="game-shell" class="game-shell hidden" aria-label="The Last Light top-down shooter">
       <div id="game"></div>
-      <div id="mobile-controls" class="mobile-controls" aria-label="Touch controls">
-        <div class="mobile-stick mobile-stick-move" data-mobile-stick="move" aria-label="Movement joystick">
-          <span class="mobile-stick-thumb"></span>
-        </div>
-        <div class="mobile-control-rail mobile-control-rail-right">
-          <button class="mobile-action mobile-action-pause" type="button" data-mobile-action="pause" aria-label="Pause">
-            <img data-mobile-icon="pause" alt="" />
-          </button>
-          <div class="mobile-actions">
-            <button class="mobile-action" type="button" data-mobile-action="flare" aria-label="Fire flare">
-              <img data-mobile-icon="flare" alt="" />
-            </button>
-            <button class="mobile-action" type="button" data-mobile-action="interact" aria-label="Open supply cache">
-              <img data-mobile-icon="interact" alt="" />
-            </button>
-          </div>
-        </div>
-        <div class="mobile-stick mobile-stick-aim" data-mobile-stick="aim" aria-label="Aim and fire joystick">
-          <span class="mobile-stick-thumb"></span>
-        </div>
-      </div>
       <div class="scanlines" aria-hidden="true"></div>
       <div class="vignette" aria-hidden="true"></div>
     </main>

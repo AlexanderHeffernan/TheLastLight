@@ -93,16 +93,11 @@ export class SupplySystem {
     );
   }
 
-  interact(player = this.player): void {
-    const canOpen = this.canInteract(player);
-    if (canOpen) this.openDrop();
-  }
-
-  canInteract(player = this.player): boolean {
-    return !this.hooks.isGameOver()
-      && this.state === 'ready'
+  interact(player: Phaser.Physics.Arcade.Sprite): void {
+    const canOpen = this.state === 'ready'
       && !!this.cache
       && Phaser.Math.Distance.Between(player.x, player.y, this.cache.x, this.cache.y) <= 58;
+    if (canOpen) this.openDrop();
   }
 
   networkState(): {
@@ -131,9 +126,11 @@ export class SupplySystem {
       return;
     }
 
-    const canOpen = this.canInteract();
+    const canOpen = this.state === 'ready'
+      && !!this.cache
+      && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.cache.x, this.cache.y) <= 58;
     this.prompt.setVisible(canOpen);
-    if (canOpen && Phaser.Input.Keyboard.JustDown(this.interactKey)) this.interact();
+    if (canOpen && Phaser.Input.Keyboard.JustDown(this.interactKey)) this.openDrop();
 
     this.players.forEach((player) => {
       if (time < (this.adrenalineUntil.get(player) ?? 0)) player.setTint(0xffd18a);
