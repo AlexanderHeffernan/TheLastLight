@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { BOSS_MUSIC_KEYS, DEFEAT_MUSIC_KEYS, MUSIC_KEYS } from '../assets/manifest';
+import type { DuoOscillatorType, DuoPlayerId, DuoSoundEffect } from '../network/protocol';
 
 const MUSIC_VOLUME = 0.16;
 const MUSIC_CROSSFADE_MS = 1100;
@@ -7,9 +8,24 @@ const MUSIC_CROSSFADE_MS = 1100;
 type BossMusicKind = keyof typeof BOSS_MUSIC_KEYS;
 type MusicSound = Phaser.Sound.WebAudioSound | Phaser.Sound.HTML5AudioSound;
 
+interface AudioPosition {
+  x: number;
+  y: number;
+}
+
+interface SoundMetadata {
+  ownerId?: DuoPlayerId;
+  shotSequence?: number;
+}
+
 interface BossEncounter {
   kind: BossMusicKind;
   sequence: number;
+}
+
+export interface MusicCue {
+  key: string;
+  loop: boolean;
 }
 
 const BOSS_MUSIC_PRIORITY: Record<BossMusicKind, number> = {
@@ -28,8 +44,18 @@ export class AudioSystem {
   private readonly musicTracks = new Set<MusicSound>();
   private fadingOut = false;
   private destroyed = false;
+  private readonly onCue?: (cue: MusicCue) => void;
+  private readonly onSound?: (sound: DuoSoundEffect) => void;
 
-  constructor(private readonly scene: Phaser.Scene) {
+  constructor(
+    private readonly scene: Phaser.Scene,
+    options: {
+      onCue?: (cue: MusicCue) => void;
+      onSound?: (sound: DuoSoundEffect) => void;
+    } = {},
+  ) {
+    this.onCue = options.onCue;
+    this.onSound = options.onSound;
     scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.destroy());
   }
 
@@ -60,6 +86,19 @@ export class AudioSystem {
     const active = this.activeBossEncounter();
     if (active) this.transitionTo(BOSS_MUSIC_KEYS[active.kind], true);
     else this.playNextMusicTrack(true);
+  }
+
+  endLatestBossTheme(kind?: BossMusicKind): void {
+    const matches = [...this.bossEncounters.entries()]
+      .filter(([, encounter]) => !kind || encounter.kind === kind)
+      .sort(([, left], [, right]) => right.sequence - left.sequence);
+    const encounter = matches[0];
+    if (encounter) this.endBossTheme(encounter[0]);
+  }
+
+  applyNetworkCue(cue: MusicCue): void {
+    if (this.destroyed || !cue?.key) return;
+    this.transitionTo(cue.key, cue.loop, 0, false);
   }
 
   beginDefeatTheme(): void {
@@ -110,7 +149,7 @@ export class AudioSystem {
     this.transitionTo(key, false, resumeInProgress ? 60 : 0);
   }
 
-  private transitionTo(key: string, loop: boolean, seek = 0): void {
+  private transitionTo(key: string, loop: boolean, seek = 0, notify = true): void {
     if (this.destroyed || (this.musicKey === key && this.music)) return;
 
     const previous = this.music;
@@ -118,6 +157,7 @@ export class AudioSystem {
     this.musicTracks.add(track);
     this.music = track;
     this.musicKey = key;
+    if (notify) this.onCue?.({ key, loop });
     track.once(Phaser.Sound.Events.COMPLETE, () => {
       if (this.music !== track || this.destroyed) return;
       this.music = undefined;
@@ -151,10 +191,82 @@ export class AudioSystem {
     });
   }
 
-  playTone(frequency: number, duration: number, volume: number, type: OscillatorType = 'square'): void {
+  playTone(
+    frequency: number,
+    duration: number,
+    volume: number,
+    type: DuoOscillatorType = 'square',
+    position?: AudioPosition,
+    metadata?: SoundMetadata,
+  ): void {
     const context = this.context();
     if (!context || context.state !== 'running') return;
+    this.emitSound({
+      kind: 'tone',
+      frequency,
+      duration,
+      volume,
+      oscillator: type,
+    }, position, metadata);
+    this.playToneInternal(context, frequency, duration, volume, type);
+  }
 
+  playNoise(
+    duration: number,
+    volume: number,
+    frequency: number,
+    position?: AudioPosition,
+    metadata?: SoundMetadata,
+  ): void {
+    const context = this.context();
+    if (!context || context.state !== 'running') return;
+    this.emitSound({ kind: 'noise', duration, volume, frequency }, position, metadata);
+    this.playNoiseInternal(context, duration, volume, frequency);
+  }
+
+  playAlert(position?: AudioPosition): void {
+    const context = this.context();
+    if (!context || context.state !== 'running') return;
+    this.emitSound({ kind: 'alert' }, position);
+    this.playAlertInternal(context);
+  }
+
+  playNetworkSound(sound: Record<string, unknown>, listener?: AudioPosition): void {
+    const context = this.context();
+    if (!context || context.state !== 'running' || !sound || typeof sound.kind !== 'string') return;
+    const origin = this.networkPosition(sound);
+    const attenuation = origin && listener
+      ? Phaser.Math.Clamp(1 - Phaser.Math.Distance.Between(origin.x, origin.y, listener.x, listener.y) / 900, 0.14, 1)
+      : 1;
+    if (sound.kind === 'tone') {
+      const oscillator = sound.oscillator;
+      if (!isOscillatorType(oscillator)) return;
+      this.playToneInternal(
+        context,
+        clampFinite(sound.frequency, 20, 20000, 440),
+        clampFinite(sound.duration, 0.001, 4, 0.08),
+        clampFinite(sound.volume, 0, 1, 0.04) * attenuation,
+        oscillator,
+      );
+    } else if (sound.kind === 'noise') {
+      this.playNoiseInternal(
+        context,
+        clampFinite(sound.duration, 0.001, 4, 0.08),
+        clampFinite(sound.volume, 0, 1, 0.03) * attenuation,
+        clampFinite(sound.frequency, 20, 20000, 900),
+      );
+    } else if (sound.kind === 'alert') {
+      this.playAlertInternal(context);
+    }
+  }
+
+  private playToneInternal(
+    context: AudioContext,
+    frequency: number,
+    duration: number,
+    volume: number,
+    type: DuoOscillatorType,
+  ): void {
     const oscillator = context.createOscillator();
     const gain = context.createGain();
     oscillator.type = type;
@@ -167,10 +279,7 @@ export class AudioSystem {
     oscillator.stop(context.currentTime + duration);
   }
 
-  playNoise(duration: number, volume: number, frequency: number): void {
-    const context = this.context();
-    if (!context || context.state !== 'running') return;
-
+  private playNoiseInternal(context: AudioContext, duration: number, volume: number, frequency: number): void {
     const frameCount = Math.floor(context.sampleRate * duration);
     const buffer = context.createBuffer(1, frameCount, context.sampleRate);
     const samples = buffer.getChannelData(0);
@@ -189,10 +298,7 @@ export class AudioSystem {
     source.start();
   }
 
-  playAlert(): void {
-    const context = this.context();
-    if (!context || context.state !== 'running') return;
-
+  private playAlertInternal(context: AudioContext): void {
     const start = context.currentTime;
     [0, 0.17].forEach((delay, index) => {
       const oscillator = context.createOscillator();
@@ -213,7 +319,20 @@ export class AudioSystem {
       oscillator.start(beginsAt);
       oscillator.stop(endsAt);
     });
-    this.playNoise(0.08, 0.018, 1200);
+    this.playNoiseInternal(context, 0.08, 0.018, 1200);
+  }
+
+  private emitSound(sound: DuoSoundEffect, position?: AudioPosition, metadata?: SoundMetadata): void {
+    if (!this.onSound) return;
+    const enriched = metadata ? { ...sound, ...metadata } : sound;
+    if (position) this.onSound({ ...enriched, x: position.x, y: position.y } as DuoSoundEffect);
+    else this.onSound(enriched as DuoSoundEffect);
+  }
+
+  private networkPosition(sound: Record<string, unknown>): AudioPosition | undefined {
+    const x = Number(sound.x);
+    const y = Number(sound.y);
+    return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined;
   }
 
   private context(): AudioContext | undefined {
@@ -232,4 +351,13 @@ export class AudioSystem {
     this.music = undefined;
     this.musicKey = undefined;
   }
+}
+
+function isOscillatorType(value: unknown): value is DuoOscillatorType {
+  return value === 'sine' || value === 'square' || value === 'sawtooth' || value === 'triangle';
+}
+
+function clampFinite(value: unknown, minimum: number, maximum: number, fallback: number): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? Phaser.Math.Clamp(number, minimum, maximum) : fallback;
 }

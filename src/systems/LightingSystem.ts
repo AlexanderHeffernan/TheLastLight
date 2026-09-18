@@ -10,6 +10,11 @@ export interface ShadowCaster extends LightPosition {
   radius: number;
 }
 
+export interface PlayerLight extends LightPosition {
+  aimAngle: number;
+  active?: boolean;
+}
+
 interface ExplosionLight extends LightPosition {
   scale: number;
   intensity: number;
@@ -30,7 +35,7 @@ export class LightingSystem {
   private readonly darkness: Phaser.GameObjects.RenderTexture;
   private readonly radialMask: Phaser.GameObjects.Image;
   private readonly directionalMask: Phaser.GameObjects.Image;
-  private readonly playerBeam: Phaser.GameObjects.Image;
+  private readonly playerBeams: Phaser.GameObjects.Image[];
   private readonly beams: Phaser.GameObjects.Image[];
   private readonly glows: Phaser.GameObjects.Image[];
   private readonly shadows: Phaser.GameObjects.RenderTexture;
@@ -58,12 +63,12 @@ export class LightingSystem {
     this.radialMask = scene.make.image({ x: 0, y: 0, key: 'light-mask', add: false });
     this.directionalMask = scene.make.image({ x: 0, y: 0, key: 'beam-mask', add: false })
       .setOrigin(40 / 512, 0.5);
-    this.playerBeam = scene.add.image(0, 0, 'beam-mask')
+    this.playerBeams = [0, 1].map(() => scene.add.image(0, 0, 'beam-mask')
       .setOrigin(40 / 512, 0.5)
       .setDepth(16)
       .setTint(0xffd08a)
       .setAlpha(0.045)
-      .setBlendMode(Phaser.BlendModes.ADD);
+      .setBlendMode(Phaser.BlendModes.ADD));
     this.shadows = scene.add.renderTexture(0, 0, GAME_WIDTH, GAME_HEIGHT).setOrigin(0).setDepth(17);
     this.projectedShadowMask = scene.make.image({ x: 0, y: 0, key: 'projected-shadow', add: false })
       .setOrigin(0, 0.5)
@@ -114,6 +119,7 @@ export class LightingSystem {
     aimAngle: number,
     casters: ShadowCaster[] = [],
     emberLights: LightPosition[] = [],
+    playerLights: PlayerLight[] = [{ x: playerX, y: playerY, aimAngle, active: true }],
   ): void {
     this.darkness.clear();
     const flareIntensity = this.aerialFlare?.intensity ?? 0;
@@ -131,8 +137,17 @@ export class LightingSystem {
       this.flareBloom.setAlpha(0);
     }
 
-    this.playerBeam.setPosition(playerX, playerY).setRotation(aimAngle);
-    this.eraseDirectionalLight(playerX, playerY, aimAngle, 1, 0.88);
+    this.playerBeams.forEach((beam, index) => {
+      const light = playerLights[index];
+      if (!light || light.active === false) {
+        beam.setVisible(false);
+        return;
+      }
+      beam.setVisible(true).setPosition(light.x, light.y).setRotation(light.aimAngle);
+    });
+    playerLights.forEach((light) => {
+      if (light.active !== false) this.eraseDirectionalLight(light.x, light.y, light.aimAngle, 1, 0.88);
+    });
 
     if (!this.generatorDestroyed && this.outpostPower > 0.01) {
       this.emitters.forEach((light, index) => {
@@ -177,7 +192,11 @@ export class LightingSystem {
       this.lastShadowRedraw = this.scene.time.now;
       this.shadows.clear();
       this.shadows.beginDraw();
-      this.drawProjectedShadows(playerX, playerY, aimAngle, 470, 0.44, 0.82, casters);
+      playerLights.forEach((light) => {
+        if (light.active !== false) {
+          this.drawProjectedShadows(light.x, light.y, light.aimAngle, 470, 0.44, 0.82, casters);
+        }
+      });
       if (!this.generatorDestroyed && this.outpostPower > 0.01) {
         this.emitters.forEach((light, index) => {
           if (this.disabledLights.has(index)) return;
@@ -255,6 +274,24 @@ export class LightingSystem {
       duration,
       ease: 'Sine.inOut',
     });
+  }
+
+  networkFlareState(): { x: number; y: number; intensity: number } | undefined {
+    return this.aerialFlare ? { ...this.aerialFlare } : undefined;
+  }
+
+  syncAerialFlare(flare?: { x: number; y: number; intensity: number }): void {
+    if (!flare) {
+      this.aerialFlare = undefined;
+      this.flareColor.setAlpha(0);
+      this.flareBloom.setAlpha(0);
+      return;
+    }
+    this.aerialFlare = {
+      x: flare.x,
+      y: flare.y,
+      intensity: Phaser.Math.Clamp(flare.intensity, 0, 1),
+    };
   }
 
   startPowerFailure(wave: number): boolean {
@@ -335,9 +372,21 @@ export class LightingSystem {
   }
 
   disableLight(index: number): void {
+    if (this.disabledLights.has(index)) return;
     this.disabledLights.add(index);
     this.scene.tweens.killTweensOf(this.glows[index]);
     this.scene.tweens.add({ targets: [this.glows[index], this.beams[index]], alpha: 0, duration: 120 });
+  }
+
+  enableLight(index: number): void {
+    if (!this.disabledLights.delete(index)) return;
+    const glow = this.glows[index];
+    const beam = this.beams[index];
+    this.scene.tweens.killTweensOf([glow, beam]);
+    beam.setVisible(true);
+    this.scene.tweens.add({ targets: beam, alpha: 0.04, duration: 180 });
+    glow.setVisible(true);
+    this.pulseGlow(glow, index);
   }
 
   private pulseGlow(light: Phaser.GameObjects.Image, index: number): void {

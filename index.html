@@ -82,7 +82,21 @@
 
       <form id="deploy-form" class="home-panel" autocomplete="off">
         <label class="callsign-label" for="callsign">SURVIVOR CALLSIGN</label>
-        <input id="callsign" name="callsign" maxlength="18" placeholder="ENTER CALLSIGN" autocomplete="off" spellcheck="false" required />
+        <div class="callsign-entry">
+          <input id="callsign" name="callsign" maxlength="18" placeholder="ENTER CALLSIGN" autocomplete="off" spellcheck="false" required />
+          <div class="callsign-tools" aria-label="Survivor and game mode options">
+            <button id="skin-button" class="home-tool-button" type="button" aria-label="Choose survivor skin" title="CHOOSE SURVIVOR SKIN">
+              <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5a2.1 2.1 0 1 0-2.1-2.1" /><path d="M12 4.5v3.1l-8.2 5.8c-1 .7-.5 2.1.7 2.1h15c1.2 0 1.7-1.4.7-2.1L12 7.6" /></svg>
+            </button>
+            <button id="duo-toggle-button" class="home-tool-button" type="button" aria-label="Select duo mode" aria-pressed="false" title="SELECT DUO MODE">
+              <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="2.4" /><circle cx="16.5" cy="9" r="2" /><path d="M3.8 17.2c.6-2.6 2.4-4 5.2-4s4.6 1.4 5.2 4" /><path d="M14.2 14.1c2.9-.5 5 .7 5.8 3.1" /></svg>
+            </button>
+          </div>
+        </div>
+        <div id="duo-quick-actions" class="duo-quick-actions hidden" aria-label="Private duo games">
+          <button id="create-duos-button" class="menu-button menu-button-primary" type="button">CREATE DUO</button>
+          <button id="join-duos-button" class="menu-button" type="button">JOIN DUO</button>
+        </div>
         <button id="play-button" class="menu-button menu-button-primary" type="submit">
           <span>DEPLOY</span>
           <small>HOLD THE OUTPOST</small>
@@ -147,8 +161,42 @@
         <button class="modal-close" type="button" data-close-modal aria-label="Close">×</button>
         <p class="modal-kicker">SURVIVOR ARCHIVE // GLOBAL</p>
         <h2 id="leaderboard-title">LAST STANDS</h2>
+        <div id="leaderboard-mode-toggle" class="leaderboard-mode-toggle" role="group" aria-label="Leaderboard mode">
+          <button type="button" data-leaderboard-mode="solo" aria-pressed="true">SOLO</button>
+          <button type="button" data-leaderboard-mode="duos" aria-pressed="false">DUOS</button>
+        </div>
         <div class="leaderboard-head"><span>#</span><span>CALLSIGN</span><span>ELIMINATIONS</span><span>THREAT</span><span>SURVIVED</span><span>DATE</span></div>
         <div id="leaderboard-rows" class="leaderboard-rows" aria-live="polite">RETRIEVING FIELD RECORDS...</div>
+      </div>
+    </section>
+
+    <section id="duo-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="duo-title">
+      <div class="modal-panel duo-panel">
+        <button class="modal-close" type="button" data-close-modal aria-label="Close">×</button>
+        <h2 id="duo-title">DUO LOBBY</h2>
+        <div id="duo-content" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section id="skin-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="skin-title">
+      <div class="modal-panel skin-panel">
+        <button class="modal-close" type="button" data-close-modal aria-label="Close">×</button>
+        <p class="modal-kicker">FIELD KIT // APPEARANCE</p>
+        <h2 id="skin-title">SELECT SURVIVOR</h2>
+        <div id="solo-skin-picker" class="solo-skin-picker" aria-label="Select survivor skin">
+          <div class="solo-skin-header">
+            <span>CURRENT SURVIVOR</span>
+            <strong id="solo-skin-name">VETERAN</strong>
+          </div>
+          <div id="solo-skin-selector" class="duo-skin-selector" data-skin-selector="solo">
+            <button class="duo-skin-arrow" type="button" data-solo-skin-direction="-1" aria-label="Previous survivor skin">‹</button>
+            <div class="duo-skin-current">
+              <img id="solo-skin-preview" class="duo-skin-preview" decoding="async" loading="eager" alt="Veteran skin preview" />
+            </div>
+            <button class="duo-skin-arrow" type="button" data-solo-skin-direction="1" aria-label="Next survivor skin">›</button>
+          </div>
+        </div>
+        <p class="skin-modal-note">Move the cursor to turn your survivor. Your selection is saved for the next deployment.</p>
       </div>
     </section>
 
