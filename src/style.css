@@ -1063,7 +1063,7 @@ button { border-radius: 0; }
 
 .orientation-notice { display: none; }
 
-@media (max-width: 720px) {
+@media (max-width: 720px), (pointer: coarse) {
   .home-title {
     top: calc(5vh + env(safe-area-inset-top));
     left: calc(24px + env(safe-area-inset-left));
@@ -1165,7 +1165,7 @@ button { border-radius: 0; }
   }
 }
 
-@media (max-width: 720px) and (orientation: portrait) {
+@media (max-width: 720px) and (orientation: portrait), (pointer: coarse) and (orientation: portrait) {
   .home-credits { justify-self: center; }
 
   .orientation-notice {
@@ -1182,6 +1182,8 @@ button { border-radius: 0; }
     pointer-events: auto;
     touch-action: none;
   }
+
+  .orientation-notice.hidden { display: grid !important; }
 
   .orientation-notice::before {
     content: "↻";

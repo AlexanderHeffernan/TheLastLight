@@ -5,7 +5,7 @@ import flareButtonIconUrl from './assets/ui/flare_button_64.png';
 import openButtonIconUrl from './assets/ui/open_button_64.png';
 import pauseButtonIconUrl from './assets/ui/pause_button_32.png';
 import { GAME_HEIGHT, GAME_WIDTH } from './config/constants';
-import { hasTouchControls } from './config/controls';
+import { hasTouchControls, isMobilePortraitViewport } from './config/controls';
 import { setGameLaunchOptions, type GameLaunchOptions } from './network/gameLaunch';
 import { DEFAULT_PLAYER_SKIN_ID } from './network/playerSkins';
 import { HomeScreen } from './ui/HomeScreen';
@@ -219,7 +219,7 @@ function installMobileControls(): () => void {
 }
 
 function isRotatedMobileViewport(): boolean {
-  return window.matchMedia('(max-width: 720px) and (orientation: portrait)').matches;
+  return isMobilePortraitViewport();
 }
 
 function installMobileRotationSupport(activeGame: Phaser.Game): void {

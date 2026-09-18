@@ -8,7 +8,7 @@ import {
   PLAYER_SPEED,
   SOUTH_FACING_OFFSET as SOUTH_OFFSET,
 } from '../config/constants';
-import { hasTouchControls } from '../config/controls';
+import { hasTouchControls, isMobilePortraitViewport } from '../config/controls';
 import { AudioSystem, type MusicCue } from '../systems/AudioSystem';
 import { FlareSystem } from '../systems/FlareSystem';
 import { LightingSystem, type PlayerLight, type ShadowCaster } from '../systems/LightingSystem';
@@ -2720,7 +2720,7 @@ export class ArenaScene extends Phaser.Scene {
       });
       this.handleMobileOrientation(new CustomEvent('last-light:mobile-orientation', {
         detail: {
-          portrait: window.matchMedia('(max-width: 720px) and (orientation: portrait)').matches,
+          portrait: isMobilePortraitViewport(),
         },
       }));
       window.dispatchEvent(new CustomEvent('last-light:mobile-visibility', {
