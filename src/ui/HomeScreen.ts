@@ -68,6 +68,7 @@ export class HomeScreen {
   private readonly lobbyAimTargets = new Map<DuoPlayerId, number>();
   private soloSkinId = DEFAULT_PLAYER_SKIN_ID;
   private lastSoloCallsign = '';
+  private pendingInviteCode?: string;
   private duoModeSelected = false;
   private leaderboardMode: LeaderboardMode = 'solo';
 
@@ -142,10 +143,11 @@ export class HomeScreen {
     this.startMenuMusic();
     const inviteCode = readInviteCode();
     if (inviteCode) {
+      this.pendingInviteCode = inviteCode;
       const url = new URL(window.location.href);
       url.searchParams.delete('duo');
       window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
-      window.setTimeout(() => this.openJoinDuo(inviteCode), 0);
+      window.setTimeout(() => void this.openJoinDuo(), 0);
     }
   }
 
@@ -272,8 +274,12 @@ export class HomeScreen {
     }
   }
 
-  private async openJoinDuo(prefillCode = ''): Promise<void> {
+  private async openJoinDuo(prefillCode = this.pendingInviteCode ?? ''): Promise<void> {
     if (this.duoBusy || this.deploying) return;
+    if (!this.hasSavedCallsign()) {
+      this.renderJoinDuoForm(prefillCode, true);
+      return;
+    }
     const result = validatePlayerName(this.callsign.value);
     if (!result.ok) {
       this.notice.textContent = result.reason.toUpperCase();
@@ -295,14 +301,37 @@ export class HomeScreen {
     this.renderSoloSkin(callsign);
     this.notice.textContent = '';
     this.duoBusy = false;
+    this.renderJoinDuoForm(prefillCode, false);
+  }
+
+  private hasSavedCallsign(): boolean {
+    return Boolean(localStorage.getItem(CALLSIGN_KEY)?.trim());
+  }
+
+  private renderJoinDuoForm(prefillCode: string, includeCallsign: boolean): void {
     this.openModal('duo-modal');
     const wrapper = document.createElement('div');
     wrapper.className = 'duo-lobby';
-    const copy = text('p', 'Enter the private code from the host. Your browser will connect directly to theirs.');
+    const copy = text('p', includeCallsign
+      ? 'Enter your callsign and the private code from the host. Your browser will connect directly to theirs.'
+      : 'Enter the private code from the host. Your browser will connect directly to theirs.');
     copy.className = 'duo-lobby-copy';
 
     const form = document.createElement('form');
     form.className = 'duo-form';
+    let callsignInput: HTMLInputElement | undefined;
+    if (includeCallsign) {
+      const callsignLabel = document.createElement('label');
+      callsignLabel.textContent = 'YOUR CALLSIGN';
+      callsignInput = document.createElement('input');
+      callsignInput.id = 'duo-join-callsign';
+      callsignInput.maxLength = 18;
+      callsignInput.autocomplete = 'off';
+      callsignInput.spellcheck = false;
+      callsignInput.value = this.callsign.value;
+      callsignLabel.append(callsignInput);
+      form.append(callsignLabel);
+    }
     const codeLabel = document.createElement('label');
     codeLabel.textContent = 'INVITE CODE';
     const codeInput = document.createElement('input');
@@ -315,6 +344,7 @@ export class HomeScreen {
     codeInput.value = prefillCode;
     codeInput.addEventListener('input', () => {
       codeInput.value = codeInput.value.replace(/[^a-z0-9]/gi, '').toUpperCase();
+      this.pendingInviteCode = codeInput.value || undefined;
     });
     codeLabel.append(codeInput);
 
@@ -336,16 +366,16 @@ export class HomeScreen {
     form.append(codeLabel, actions);
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      void this.joinDuo(codeInput.value);
+      void this.joinDuo(codeInput.value, callsignInput?.value);
     });
     wrapper.append(copy, form);
     this.duoContent.replaceChildren(wrapper);
-    codeInput.focus();
+    (callsignInput ?? codeInput).focus();
   }
 
-  private async joinDuo(rawCode: string): Promise<void> {
+  private async joinDuo(rawCode: string, rawCallsign = this.callsign.value): Promise<void> {
     if (this.duoBusy) return;
-    const nameResult = validatePlayerName(this.callsign.value);
+    const nameResult = validatePlayerName(rawCallsign);
     if (!nameResult.ok) {
       this.renderDuoError(nameResult.reason.toUpperCase());
       return;
@@ -359,9 +389,11 @@ export class HomeScreen {
     this.renderDuoLoading('CONNECTING TO HOST...');
     try {
       const callsign = await claimDuoCallsign(nameResult.name);
+      this.callsign.value = callsign;
       const skinId = this.selectSkinForCallsign(callsign);
       const session = await DuoSession.join(roomCode, callsign, this.duoCallbacks(), skinId);
       this.duoSession = session;
+      this.pendingInviteCode = undefined;
       this.duoLobbyState = {
         roomCode: session.roomCode,
         hostCallsign: '',
@@ -375,7 +407,13 @@ export class HomeScreen {
       };
       this.renderGuestLobby();
     } catch (error) {
-      this.renderDuoError(messageFromError(error));
+      if (error instanceof CallsignUnavailableError) {
+        this.closeDuoLobby();
+        this.duoModal.classList.add('hidden');
+        this.showDuoCallsignError(error, nameResult.name);
+      } else {
+        this.renderDuoError(messageFromError(error));
+      }
     } finally {
       this.duoBusy = false;
     }
@@ -930,6 +968,7 @@ export class HomeScreen {
   }
 
   private showDuoCallsignError(error: unknown, callsign: string): void {
+    this.callsign.value = callsign;
     this.callsignAvailable = false;
     this.renderSoloSkin(callsign);
     this.notice.textContent = error instanceof CallsignUnavailableError
