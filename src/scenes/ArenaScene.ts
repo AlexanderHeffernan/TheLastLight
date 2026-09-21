@@ -58,6 +58,14 @@ interface TouchVector {
 
 const MOBILE_TOUCH_HINT_Y = HEIGHT - 150;
 const AIM_FIRE_DEAD_ZONE = 0.7;
+const PLAYER_SPRITE_SIZE = 64;
+const PLAYER_COLLISION_RADIUS = 12;
+const PLAYER_COLLISION_OFFSET_X = 20;
+const PLAYER_COLLISION_OFFSET_Y = 9;
+const PLAYER_PIVOT_X = (PLAYER_COLLISION_OFFSET_X + PLAYER_COLLISION_RADIUS) / PLAYER_SPRITE_SIZE;
+const PLAYER_PIVOT_Y = (PLAYER_COLLISION_OFFSET_Y + PLAYER_COLLISION_RADIUS) / PLAYER_SPRITE_SIZE;
+const PLAYER_SHOT_RECOIL_DISTANCE = 1.4;
+const ENEMY_FACING_EPSILON = 0.5;
 
 interface TreeLayers {
   x: number;
@@ -513,10 +521,12 @@ export class ArenaScene extends Phaser.Scene {
     this.makeLightingAndAmbience();
     this.makeInterface();
     this.bindControls();
+    this.playerActors.forEach((actor) => {
+      this.physics.add.collider(actor.sprite, this.solidProps);
+      this.physics.add.collider(actor.sprite, this.barrels);
+    });
 
     if (this.isNetworkClient) {
-      this.physics.add.collider(this.player, this.solidProps);
-      this.physics.add.collider(this.player, this.barrels);
       this.attachNetworkClient();
       this.duoOptions?.session.sendReady();
       this.audio.startMusic();
@@ -586,8 +596,6 @@ export class ArenaScene extends Phaser.Scene {
     this.physics.add.overlap(this.bullets, this.solidProps, this.hitProp, undefined, this);
     this.playerActors.forEach((actor) => {
       this.physics.add.overlap(actor.sprite, this.zombies, this.hurtPlayer, undefined, this);
-      this.physics.add.collider(actor.sprite, this.solidProps);
-      this.physics.add.collider(actor.sprite, this.barrels);
     });
     this.physics.add.collider(
       this.zombies,
@@ -820,6 +828,33 @@ export class ArenaScene extends Phaser.Scene {
     return nearest;
   }
 
+  private enemyFacingAngle(enemy: any, target: PlayerActor): number {
+    const deltaX = target.sprite.x - enemy.x;
+    const deltaY = target.sprite.y - enemy.y;
+    const previousAngle = Number(enemy.getData('facingAngle'));
+    if (Math.hypot(deltaX, deltaY) <= ENEMY_FACING_EPSILON && Number.isFinite(previousAngle)) {
+      // Angle.Between is undefined as a gameplay direction when both bodies
+      // occupy the same point. Keep the last meaningful heading instead of
+      // allowing tiny physics rounding changes to flip the sprite every frame.
+      return previousAngle;
+    }
+
+    const angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.sprite.x, target.sprite.y);
+    enemy.setData('facingAngle', angle);
+    return angle;
+  }
+
+  private enemyIsAtContactDistance(enemy: any, target: PlayerActor): boolean {
+    const enemyBody = enemy.body as Phaser.Physics.Arcade.Body | null;
+    const targetBody = target.sprite.body as Phaser.Physics.Arcade.Body | null;
+    if (!enemyBody || !targetBody) return false;
+
+    // Use Arcade's actual shape test instead of sprite-center distance. Enemy
+    // bodies are offset behind their artwork, and crawlers use rectangles, so
+    // a summed-radius approximation can stop them before the attack overlap.
+    return this.physics.world.intersects(enemyBody, targetBody);
+  }
+
   private withCombatTarget<T>(target: PlayerActor | undefined, action: () => T): T {
     if (!target) return action();
     const previousPlayer = this.player;
@@ -862,18 +897,16 @@ export class ArenaScene extends Phaser.Scene {
     }
     actor.aim = Number.isFinite(input.aim) ? input.aim : actor.aim;
     actor.sprite.rotation = actor.aim - SOUTH_OFFSET;
-    body.setCircle(
-      12,
-      20 - Math.cos(actor.aim) * 11,
-      20 - Math.sin(actor.aim) * 11,
-    );
   }
 
   private updateActorDisplay(actor: PlayerActor): void {
     const aim = actor.aim;
-    actor.shadow.setPosition(actor.sprite.x + 2, actor.sprite.y + 3).setRotation(actor.sprite.rotation);
-    actor.glow.setPosition(actor.sprite.x, actor.sprite.y);
-    actor.ring?.setPosition(actor.sprite.x, actor.sprite.y)
+    // sprite.x/y is the collision-centered pivot, so player markers follow it directly.
+    const pivotX = actor.sprite.x;
+    const pivotY = actor.sprite.y;
+    actor.shadow.setPosition(pivotX + 2, pivotY + 3).setRotation(actor.sprite.rotation);
+    actor.glow.setPosition(pivotX, pivotY);
+    actor.ring?.setPosition(pivotX, pivotY)
       .setStrokeStyle(2, actor.color, actor.alive ? 0.82 : 0.3)
       .setAlpha(actor.alive ? 1 : 0.35);
     const healthBackX = actor.sprite.x - Math.cos(aim) * 36;
@@ -2115,10 +2148,14 @@ export class ArenaScene extends Phaser.Scene {
       .setTint(color)
       .setBlendMode(Phaser.BlendModes.ADD)
       .setDepth(16);
-    const sprite = this.physics.add.sprite(position.x, position.y, skin.textureKey).setDepth(4);
+    // Move the sprite origin to the existing collision center in the 64px texture.
+    const sprite = this.physics.add.sprite(position.x, position.y, skin.textureKey)
+      .setOrigin(PLAYER_PIVOT_X, PLAYER_PIVOT_Y)
+      .setDepth(4);
     sprite.setCollideWorldBounds(true).setData('playerId', id);
     const body = sprite.body as Phaser.Physics.Arcade.Body;
-    body.setCircle(12, 20, 9);
+    body.setCircle(PLAYER_COLLISION_RADIUS, PLAYER_COLLISION_OFFSET_X, PLAYER_COLLISION_OFFSET_Y);
+    body.updateFromGameObject();
     body.setMaxVelocity(PLAYER_SPEED);
     return {
       id,
@@ -3202,15 +3239,17 @@ export class ArenaScene extends Phaser.Scene {
       }
       this.withCombatTarget(target, () => {
         if (zombie.getData('bossKind')) {
-          this.updateBoss(zombie, time);
+          this.updateBoss(zombie, time, target);
           return;
         }
-        const angle = Phaser.Math.Angle.Between(zombie.x, zombie.y, this.player.x, this.player.y);
+        const angle = this.enemyFacingAngle(zombie, target);
+        const atContactDistance = this.enemyIsAtContactDistance(zombie, target);
         const crawler = zombie.getData('type') === 'crawler';
         const crawlPulse = crawler ? 0.68 + Math.max(0, Math.sin(zombie.getData('step') * 1.7)) * 0.32 : 1;
         const speed = zombie.getData('speed') * crawlPulse;
         if (time >= zombie.getData('staggerUntil')) {
-          zombie.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+          if (atContactDistance) zombie.setVelocity(0);
+          else zombie.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
         }
         zombie.rotation = angle - SOUTH_OFFSET;
         if (crawler) {
@@ -3290,10 +3329,10 @@ export class ArenaScene extends Phaser.Scene {
     this.sendHostSnapshot(time);
   }
 
-  private updateBoss(boss: any, time: number): void {
+  private updateBoss(boss: any, time: number, target: PlayerActor): void {
     const kind = boss.getData('bossKind') as BossKind;
     const definition = BOSS_DEFINITIONS[kind];
-    const angle = Phaser.Math.Angle.Between(boss.x, boss.y, this.player.x, this.player.y);
+    const angle = this.enemyFacingAngle(boss, target);
     const distance = Phaser.Math.Distance.Between(boss.x, boss.y, this.player.x, this.player.y);
     const state = boss.getData('bossState');
 
@@ -3314,7 +3353,8 @@ export class ArenaScene extends Phaser.Scene {
           boss.setVelocity(0);
         }
       } else {
-        this.steerBossAroundObstacles(boss, angle, definition.speed);
+        if (this.enemyIsAtContactDistance(boss, target)) boss.setVelocity(0);
+        else this.steerBossAroundObstacles(boss, angle, definition.speed);
       }
 
       if (time >= boss.getData('abilityAt')) {
@@ -4429,8 +4469,14 @@ export class ArenaScene extends Phaser.Scene {
       onComplete: () => casing.destroy(),
     });
 
-    actor.sprite.x -= Math.cos(angle) * 1.4;
-    actor.sprite.y -= Math.sin(angle) * 1.4;
+    // Recoil used to mutate the sprite position directly. That bypassed Arcade's
+    // collision sweep, so repeated shots could teleport the player through a prop.
+    // Apply the same small kick through a collision-aware movement instead.
+    this.movePlayerSafely(
+      actor,
+      -Math.cos(angle) * PLAYER_SHOT_RECOIL_DISTANCE,
+      -Math.sin(angle) * PLAYER_SHOT_RECOIL_DISTANCE,
+    );
   }
 
   private findZombieBetweenActor(actor: PlayerActor, x: number, y: number) {
@@ -4509,6 +4555,103 @@ export class ArenaScene extends Phaser.Scene {
       .setScale(kind === 'blood-hit' ? 1.15 : 1);
     effect.play(kind);
     effect.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => effect.destroy());
+  }
+
+  private movePlayerSafely(
+    actor: PlayerActor,
+    deltaX: number,
+    deltaY: number,
+  ): { x: number; y: number } {
+    const body = actor.sprite.body as Phaser.Physics.Arcade.Body | null;
+    if (!body?.enable || (deltaX === 0 && deltaY === 0)) return { x: 0, y: 0 };
+
+    const startX = actor.sprite.x;
+    const startY = actor.sprite.y;
+    let x = startX;
+    let y = startY;
+
+    // Move one axis at a time. When a step would enter an obstacle, binary
+    // search the last clear position so the player lands exactly on the
+    // collision boundary instead of stopping a fraction of a pixel inside it.
+    // That exact boundary is what lets the next horizontal/vertical input slide
+    // cleanly along a wall.
+    const moveAxis = (axis: 'x' | 'y', distance: number): void => {
+      let remaining = Math.abs(distance);
+      const direction = Math.sign(distance);
+      while (remaining > 0.0001) {
+        const step = Math.min(remaining, 1);
+        const candidateX = axis === 'x' ? x + direction * step : x;
+        const candidateY = axis === 'y' ? y + direction * step : y;
+        if (this.playerCanOccupy(actor, candidateX, candidateY)) {
+          x = candidateX;
+          y = candidateY;
+          remaining -= step;
+          continue;
+        }
+
+        let clearDistance = 0;
+        let blockedDistance = step;
+        for (let iteration = 0; iteration < 8; iteration += 1) {
+          const midpoint = (clearDistance + blockedDistance) / 2;
+          const midpointX = axis === 'x' ? x + direction * midpoint : x;
+          const midpointY = axis === 'y' ? y + direction * midpoint : y;
+          if (this.playerCanOccupy(actor, midpointX, midpointY)) clearDistance = midpoint;
+          else blockedDistance = midpoint;
+        }
+        if (clearDistance > 0) {
+          if (axis === 'x') x += direction * clearDistance;
+          else y += direction * clearDistance;
+        }
+        break;
+      }
+    };
+
+    moveAxis('x', deltaX);
+    moveAxis('y', deltaY);
+
+    if (x === startX && y === startY) return { x: 0, y: 0 };
+    actor.sprite.setPosition(x, y);
+    // Keep the dynamic body in sync immediately; otherwise the physics step
+    // would briefly use the pre-recoil body position.
+    body.updateFromGameObject();
+    return { x: x - startX, y: y - startY };
+  }
+
+  private playerCanOccupy(actor: PlayerActor, spriteX: number, spriteY: number): boolean {
+    const body = actor.sprite.body as Phaser.Physics.Arcade.Body | null;
+    if (!body) return false;
+
+    const radius = Math.max(body.halfWidth, body.halfHeight);
+    const centerX = spriteX + body.center.x - actor.sprite.x;
+    const centerY = spriteY + body.center.y - actor.sprite.y;
+    const bounds = this.physics.world.bounds;
+    if (
+      centerX - radius < bounds.x
+      || centerX + radius > bounds.right
+      || centerY - radius < bounds.y
+      || centerY + radius > bounds.bottom
+    ) {
+      return false;
+    }
+
+    const overlapsObstacle = (prop: any): boolean => {
+      if (!prop?.active || !prop.body?.enable) return false;
+      const obstacle = prop.body as Phaser.Physics.Arcade.StaticBody;
+      if (obstacle.isCircle) {
+        const combinedRadius = radius + obstacle.halfWidth;
+        return Phaser.Math.Distance.Squared(centerX, centerY, obstacle.center.x, obstacle.center.y)
+          < combinedRadius * combinedRadius;
+      }
+
+      const closestX = Phaser.Math.Clamp(centerX, obstacle.x, obstacle.right);
+      const closestY = Phaser.Math.Clamp(centerY, obstacle.y, obstacle.bottom);
+      const distanceX = centerX - closestX;
+      const distanceY = centerY - closestY;
+      return distanceX * distanceX + distanceY * distanceY < radius * radius;
+    };
+
+    return !this.solidProps.getChildren().some(overlapsObstacle)
+      && !this.barrels.getChildren().some(overlapsObstacle);
   }
 
   private isOutpostProp(prop: any): boolean {
@@ -5166,7 +5309,7 @@ export class ArenaScene extends Phaser.Scene {
       playerActor.sprite.x,
       playerActor.sprite.y,
     );
-    const angle = Phaser.Math.Angle.Between(zombie.x, zombie.y, playerActor.sprite.x, playerActor.sprite.y);
+    const angle = this.enemyFacingAngle(zombie, playerActor);
     if (charging) {
       zombie.setVelocity(0).setData({
         bossState: 'recovery',
