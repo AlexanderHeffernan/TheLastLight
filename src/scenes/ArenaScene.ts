@@ -131,7 +131,9 @@ interface PlayerActor {
   lastInteract: boolean;
 }
 
-const MAX_ACTIVE_ZOMBIES = 90;
+// This is only a browser-safety failsafe. Normal gameplay should not stop
+// spawning because the arena is crowded; players are expected to keep killing.
+const EMERGENCY_ACTIVE_ZOMBIE_LIMIT = 240;
 const SNAPSHOT_RENDER_DELAY_MS = 100;
 const SNAPSHOT_INTERVAL_MS = 50;
 const BOSS_DEFINITIONS: Record<BossKind, BossDefinition> = {
@@ -4889,7 +4891,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   spawnZombie(edge = Phaser.Math.Between(0, 3)) {
-    if (this.isGameOver || this.zombies.countActive() >= MAX_ACTIVE_ZOMBIES) return;
+    if (this.isGameOver || this.zombies.countActive() >= EMERGENCY_ACTIVE_ZOMBIE_LIMIT) return;
     const { x, y } = this.edgeSpawnPosition(edge, 38);
 
     const roll = Phaser.Math.Between(0, 99);
@@ -4897,25 +4899,25 @@ export class ArenaScene extends Phaser.Scene {
       name: 'shambler', texture: 'zombie', health: 1, speed: Phaser.Math.Between(49, 66),
       scale: 1, tint: 0xffffff, bodyRadius: 12, bodyOffset: 8, shadowWidth: 38, shadowHeight: 16,
     };
-    if (this.director.wave >= 2 && roll < 22) {
+    if (this.director.wave >= 4 && roll < 22) {
       type = {
         name: 'runner', texture: 'zombie-runner', health: 1, speed: Phaser.Math.Between(96, 116),
         scale: 1, tint: 0xffffff, bodyRadius: 11, bodyOffset: 8, shadowWidth: 34, shadowHeight: 14,
       };
     }
-    if (this.director.wave >= 2 && roll >= 22 && roll < 36) {
+    if (this.director.wave >= 7 && roll >= 22 && roll < 36) {
       type = {
         name: 'crawler', texture: 'zombie-crawler', health: 1, speed: Phaser.Math.Between(38, 46),
         scale: 1, tint: 0xffffff, bodyRadius: 10, bodyOffset: 4, shadowWidth: 32, shadowHeight: 12,
       };
     }
-    if (this.director.wave >= 3 && roll >= 80) {
+    if (this.director.wave >= 10 && roll >= 80) {
       type = {
         name: 'brute', texture: 'zombie-brute', health: 3, speed: Phaser.Math.Between(39, 48),
         scale: 1, tint: 0xffffff, bodyRadius: 17, bodyOffset: 6, shadowWidth: 46, shadowHeight: 20,
       };
     }
-    if (this.director.wave >= 4 && roll >= 45 && roll < 59) {
+    if (this.director.wave >= 13 && roll >= 45 && roll < 59) {
       type = {
         name: 'charred', texture: 'zombie-charred', health: 2, speed: Phaser.Math.Between(66, 78),
         scale: 1, tint: 0xffffff, bodyRadius: 13, bodyOffset: 7, shadowWidth: 40, shadowHeight: 17,

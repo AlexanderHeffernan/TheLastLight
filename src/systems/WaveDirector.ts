@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 
 export type BossKind = 'breaker' | 'lurker' | 'furnace' | 'spitter';
 
+const ALL_BOSS_KINDS: BossKind[] = ['breaker', 'lurker', 'furnace', 'spitter'];
+
 interface WaveDirectorHooks {
   spawnZombie: (edge?: number) => void;
   spawnBoss: (kind: BossKind, edge: number) => void;
@@ -39,37 +41,54 @@ export class WaveDirector {
         this.updateSpawnRate();
       });
     });
-    this.advanceEvent = this.scene.time.addEvent({
-      delay: 26000,
-      callback: () => this.advance(),
-      loop: true,
-    });
+    this.scheduleAdvance();
   }
 
   stop(): void {
     this.openingEvent?.remove();
     this.spawnEvent?.remove();
     this.advanceEvent?.remove();
+    this.advanceEvent = undefined;
+  }
+
+  private scheduleAdvance(): void {
+    this.advanceEvent = this.scene.time.delayedCall(this.phaseDuration(this.wave), () => {
+      this.advanceEvent = undefined;
+      if (this.hooks.isGameOver()) return;
+      this.advance();
+      if (!this.hooks.isGameOver()) this.scheduleAdvance();
+    });
   }
 
   private advance(): void {
     if (this.hooks.isGameOver()) return;
     this.wave += 1;
     const messages: Record<number, [string, string]> = {
-      2: ['FAST MOVERS', 'RUNNERS AND CRAWLERS HAVE ENTERED THE KILL ZONE'],
-      3: ['HEAVY CONTACT', 'BRUTES ARE BREAKING THROUGH'],
+      2: ['FIRST CONTACT', 'THE HORDE IS PRESSING THE PERIMETER'],
+      3: ['PRESSURE RISING', 'THE HORDE IS NOT SLOWING'],
+      4: ['FAST MOVERS', 'RUNNERS HAVE ENTERED THE KILL ZONE'],
       5: ['APEX CONTACT', 'THE BREAKER IS ENTERING THE KILL ZONE'],
       6: ['NO SAFE GROUND', 'ALL APPROACHES ARE COMPROMISED'],
+      7: ['LOW PROFILE CONTACT', 'CRAWLERS ARE MOVING THROUGH THE KILL ZONE'],
       10: ['APEX CONTACT', 'THE LURKER IS INSIDE THE PERIMETER'],
-      15: ['MULTIPLE APEX CONTACTS', 'THE FURNACE IS LEADING A BREAKER ASSAULT'],
-      20: ['EXTINCTION-LEVEL CONTACT', 'THE SPITTER AND LURKER ARE CLOSING IN'],
-      40: ['FOUR HORSEMEN', 'ALL APEX CONTACTS ARE CONVERGING'],
+      13: ['BURNING DEAD', 'CHARRED INFECTED HAVE ENTERED THE KILL ZONE'],
+      15: ['APEX CONTACT', 'THE FURNACE IS ENTERING THE KILL ZONE'],
+      20: ['APEX CONTACT', 'THE SPITTER IS ENTERING THE KILL ZONE'],
+      25: ['MULTIPLE APEX CONTACTS', 'THE BREAKER AND FURNACE ARE ENTERING THE KILL ZONE'],
+      30: ['MULTIPLE APEX CONTACTS', 'THE LURKER AND SPITTER ARE CLOSING IN'],
+      35: ['TRIPLE APEX CONTACTS', 'THE BREAKER, LURKER, AND FURNACE ARE CONVERGING'],
+      40: ['TRIPLE APEX CONTACTS', 'THE BREAKER, FURNACE, AND SPITTER ARE CONVERGING'],
+      45: ['FOUR HORSEMEN', 'ALL APEX CONTACTS ARE CONVERGING'],
     };
     let message = messages[this.wave];
     if (this.wave === 4) {
       message = this.hooks.startPowerFailure(this.wave)
         ? ['POWER FAILURE', 'OUTPOST LIGHTS ARE COLLAPSING']
-        : ['BURNING DEAD', 'CHARRED INFECTED HAVE ENTERED THE KILL ZONE'];
+        : ['FAST MOVERS', 'RUNNERS HAVE ENTERED THE KILL ZONE'];
+    }
+    const bossKinds = this.bossKindsForWave(this.wave);
+    if (!message && bossKinds.length === ALL_BOSS_KINDS.length) {
+      message = ['FOUR HORSEMEN', 'ALL APEX CONTACTS ARE CONVERGING'];
     }
     const escalationMessages: [string, string][] = [
       ['MASS CONTACT', 'THE HORDE IS NOT SLOWING'],
@@ -96,45 +115,74 @@ export class WaveDirector {
 
   private updateSpawnRate(): void {
     if (this.spawnEvent) {
-      const earlyInterval = Math.max(620, 1850 - (this.wave - 1) * 120);
-      const targetInterval = this.wave <= 12
-        ? earlyInterval
-        : Math.max(420, 620 - (this.wave - 12) * 25);
+      const targetInterval = this.regularSpawnInterval(this.wave);
       this.spawnEvent.timeScale = 1850 / targetInterval;
     }
   }
 
+  private regularSpawnInterval(wave: number): number {
+    if (wave <= 12) return Math.max(620, 1850 - (wave - 1) * 120);
+    if (wave <= 20) return Phaser.Math.Linear(620, 600, (wave - 12) / 8);
+    if (wave <= 30) return Phaser.Math.Linear(600, 550, (wave - 20) / 10);
+    if (wave <= 40) return Phaser.Math.Linear(550, 500, (wave - 30) / 10);
+    if (wave <= 45) return Phaser.Math.Linear(500, 440, (wave - 40) / 5);
+    return 440;
+  }
+
+  private phaseDuration(wave: number): number {
+    if (wave <= 10) return 26000;
+    if (wave <= 20) return 28000;
+    if (wave <= 30) return 30000;
+    if (wave <= 40) return 32000;
+    return 34000;
+  }
+
   private hordeSize(): number {
-    if (this.wave < 5) return 2 + this.wave;
-    if (this.wave < 10) return this.wave * 2 + 4;
-    if (this.wave < 15) return Math.round(this.wave * 2.5 - 1);
-    return Math.min(64, this.wave * 3 - 9);
+    const baseSize = this.baseHordeSize(this.wave);
+    const bossCount = this.bossKindsForWave(this.wave).length;
+    const bossMultiplier = bossCount === 0
+      ? 1
+      : bossCount === 1
+        ? 0.9
+        : bossCount === 2
+          ? 0.8
+          : bossCount === 3
+            ? 0.65
+            : 0.55;
+    return Math.max(1, Math.round(baseSize * bossMultiplier));
+  }
+
+  private baseHordeSize(wave: number): number {
+    if (wave < 5) return 2 + wave;
+    if (wave < 25) return wave * 2 - 2;
+    return Math.min(160, 50 + (wave - 25) * 4);
+  }
+
+  private bossKindsForWave(wave: number): BossKind[] {
+    const milestoneBosses: Partial<Record<number, BossKind[]>> = {
+      5: ['breaker'],
+      10: ['lurker'],
+      15: ['furnace'],
+      20: ['spitter'],
+      25: ['breaker', 'furnace'],
+      30: ['lurker', 'spitter'],
+      35: ['breaker', 'lurker', 'furnace'],
+      40: ['breaker', 'furnace', 'spitter'],
+      45: ALL_BOSS_KINDS,
+    };
+    if (milestoneBosses[wave]) return milestoneBosses[wave]!;
+    if (wave > 45 && wave % 5 === 0) return ALL_BOSS_KINDS;
+    return [];
   }
 
   private spawnMilestoneBosses(edges: number[]): void {
-    const firstEdge = edges[0];
-    const secondEdge = edges[Math.min(1, edges.length - 1)];
-    if (this.wave === 5) this.hooks.spawnBoss('breaker', firstEdge);
-    if (this.wave === 10) this.hooks.spawnBoss('lurker', firstEdge);
-    if (this.wave === 15) {
-      this.hooks.spawnBoss('furnace', firstEdge);
-      this.scene.time.delayedCall(4200, () => this.hooks.spawnBoss('breaker', secondEdge));
-    }
-    if (this.wave === 20) {
-      this.hooks.spawnBoss('spitter', firstEdge);
-      this.scene.time.delayedCall(4200, () => this.hooks.spawnBoss('lurker', secondEdge));
-    }
-    if (this.wave === 40) {
-      const kinds: BossKind[] = ['breaker', 'lurker', 'furnace', 'spitter'];
-      kinds.forEach((kind, index) => {
-        this.scene.time.delayedCall(index * 2800, () => this.hooks.spawnBoss(kind, edges[index % edges.length]));
-      });
-    } else if (this.wave > 20 && this.wave % 3 === 0) {
-      const kinds = Phaser.Utils.Array.Shuffle<BossKind>(['breaker', 'lurker', 'furnace', 'spitter']);
-      const count = this.wave >= 30 ? 3 : 2;
-      kinds.slice(0, count).forEach((kind, index) => {
-        this.scene.time.delayedCall(index * 3600, () => this.hooks.spawnBoss(kind, edges[index % edges.length]));
-      });
-    }
+    const kinds = this.bossKindsForWave(this.wave);
+    if (kinds.length === 0) return;
+    const stagger = kinds.length === 1 ? 0 : kinds.length === 2 ? 4200 : 3600;
+    kinds.forEach((kind, index) => {
+      const spawn = () => this.hooks.spawnBoss(kind, edges[index % edges.length]);
+      if (index === 0) spawn();
+      else this.scene.time.delayedCall(index * stagger, spawn);
+    });
   }
 }
