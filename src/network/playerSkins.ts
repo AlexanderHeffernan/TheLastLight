@@ -11,6 +11,7 @@ import mechanicSkinUrl from '../assets/characters/skins/mechanic_64.png';
 import oliverHeffernanSkinUrl from '../assets/characters/skins/oliver_heffernan_64.png';
 import topdownSoldierSkinUrl from '../assets/characters/skins/topdown_soldier_64.png';
 import urbanClimberSkinUrl from '../assets/characters/skins/urban_climber_64.png';
+import { SECRET_PLAYER_SKIN_IDS } from '../shared/playerSkinIds';
 
 export interface PlayerSkin {
   id: string;
@@ -19,7 +20,6 @@ export interface PlayerSkin {
   color: number;
   hex: string;
   secret: boolean;
-  callsigns: string[];
 }
 
 const skinPreviewUrls: Record<string, string> = {
@@ -46,7 +46,6 @@ const publicSkins: PlayerSkin[] = [
     color: 0x9a5a32,
     hex: '#9A5A32',
     secret: false,
-    callsigns: [],
   },
   {
     id: 'field_medic',
@@ -55,7 +54,6 @@ const publicSkins: PlayerSkin[] = [
     color: 0xc23b3b,
     hex: '#C23B3B',
     secret: false,
-    callsigns: [],
   },
   {
     id: 'mechanic',
@@ -64,7 +62,6 @@ const publicSkins: PlayerSkin[] = [
     color: 0xe07a28,
     hex: '#E07A28',
     secret: false,
-    callsigns: [],
   },
   {
     id: 'homesteader',
@@ -73,7 +70,6 @@ const publicSkins: PlayerSkin[] = [
     color: 0xc5a15a,
     hex: '#C5A15A',
     secret: false,
-    callsigns: [],
   },
   {
     id: 'apartment_survivor',
@@ -82,7 +78,6 @@ const publicSkins: PlayerSkin[] = [
     color: 0x74615c,
     hex: '#74615C',
     secret: false,
-    callsigns: [],
   },
   {
     id: 'hunter',
@@ -91,7 +86,6 @@ const publicSkins: PlayerSkin[] = [
     color: 0x6e7d32,
     hex: '#6E7D32',
     secret: false,
-    callsigns: [],
   },
   {
     id: 'urban_climber',
@@ -100,7 +94,6 @@ const publicSkins: PlayerSkin[] = [
     color: 0xf2c230,
     hex: '#F2C230',
     secret: false,
-    callsigns: [],
   },
   {
     id: 'block_guardian',
@@ -109,7 +102,6 @@ const publicSkins: PlayerSkin[] = [
     color: 0x6d6578,
     hex: '#6D6578',
     secret: false,
-    callsigns: [],
   },
   {
     id: 'courier',
@@ -118,7 +110,6 @@ const publicSkins: PlayerSkin[] = [
     color: 0x247c7a,
     hex: '#247C7A',
     secret: false,
-    callsigns: [],
   },
 ];
 
@@ -130,7 +121,6 @@ const secretSkins: PlayerSkin[] = [
     color: 0xf2e6d0,
     hex: '#F2E6D0',
     secret: true,
-    callsigns: ['AlexH', 'Alex'],
   },
   {
     id: 'galen_green',
@@ -139,7 +129,6 @@ const secretSkins: PlayerSkin[] = [
     color: 0x365e8d,
     hex: '#365E8D',
     secret: true,
-    callsigns: ['Galen'],
   },
   {
     id: 'cara_lill',
@@ -148,7 +137,6 @@ const secretSkins: PlayerSkin[] = [
     color: 0xa8344a,
     hex: '#A8344A',
     secret: true,
-    callsigns: ['LilCar'],
   },
   {
     id: 'oliver_heffernan',
@@ -157,22 +145,41 @@ const secretSkins: PlayerSkin[] = [
     color: 0x78a84b,
     hex: '#78A84B',
     secret: true,
-    callsigns: ['Ollie', 'Heffo'],
   },
 ];
 
 export const DEFAULT_PLAYER_SKIN_ID = publicSkins[0].id;
 
+const skinAccessByCallsign = new Map<string, Set<string>>();
+const SKIN_ACCESS_STORAGE_KEY = 'the-last-light-skin-access';
+
+loadCachedSkinAccess();
+
+export function setPlayerSkinAccess(callsign: string, skinIds: readonly string[]): void {
+  const key = callsign.trim().toLocaleLowerCase();
+  if (!key) return;
+  skinAccessByCallsign.set(key, new Set(skinIds.filter((id) => (
+    (SECRET_PLAYER_SKIN_IDS as readonly string[]).includes(id)
+  ))));
+  persistSkinAccess();
+}
+
+export function getPlayerSkinAccessIds(callsign: string): string[] {
+  const access = skinAccessByCallsign.get(callsign.trim().toLocaleLowerCase());
+  return secretSkins
+    .filter((skin) => access?.has(skin.id))
+    .map((skin) => skin.id);
+}
+
 export function getAvailablePlayerSkins(callsign: string): PlayerSkin[] {
-  const normalizedCallsign = callsign.trim().toLocaleLowerCase();
-  const matchedSecrets = secretSkins.filter((skin) => skin.callsigns
-    .some((match) => match.toLocaleLowerCase() === normalizedCallsign));
+  const accessibleSkinIds = new Set(getPlayerSkinAccessIds(callsign));
+  const matchedSecrets = secretSkins.filter((skin) => accessibleSkinIds.has(skin.id));
   return [...publicSkins, ...matchedSecrets];
 }
 
 export function getDefaultPlayerSkin(callsign: string): PlayerSkin {
-  const matchedSecret = secretSkins.find((skin) => skin.callsigns
-    .some((match) => match.toLocaleLowerCase() === callsign.trim().toLocaleLowerCase()));
+  const accessibleSkinIds = new Set(getPlayerSkinAccessIds(callsign));
+  const matchedSecret = secretSkins.find((skin) => accessibleSkinIds.has(skin.id));
   return matchedSecret ?? publicSkins[0];
 }
 
@@ -197,4 +204,34 @@ export function preloadPlayerSkinPreviews(): Promise<void> {
     image.src = url;
   }))).then(() => undefined);
   return playerSkinPreviewPreload;
+}
+
+function loadCachedSkinAccess(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(SKIN_ACCESS_STORAGE_KEY) ?? '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    for (const [callsign, skinIds] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!Array.isArray(skinIds)) continue;
+      const knownSkinIds = skinIds.filter((id): id is string => (
+        typeof id === 'string'
+        && (SECRET_PLAYER_SKIN_IDS as readonly string[]).includes(id)
+      ));
+      skinAccessByCallsign.set(callsign, new Set(knownSkinIds));
+    }
+  } catch {
+    localStorage.removeItem(SKIN_ACCESS_STORAGE_KEY);
+  }
+}
+
+function persistSkinAccess(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const entries = [...skinAccessByCallsign.entries()].slice(-64).map(([callsign, skinIds]) => (
+      [callsign, [...skinIds]]
+    ));
+    localStorage.setItem(SKIN_ACCESS_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // The server remains authoritative if browser storage is unavailable.
+  }
 }

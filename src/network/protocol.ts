@@ -186,6 +186,8 @@ export interface DuoLobbyState {
   guestCallsign: string;
   hostSkinId: string;
   guestSkinId: string;
+  hostSkinIds: string[];
+  guestSkinIds: string[];
   hostAim: number;
   guestAim: number;
   guestConnected: boolean;

@@ -1,3 +1,5 @@
+import { setPlayerSkinAccess } from '../network/playerSkins';
+
 export interface GameStatus {
   playCount: number;
   lastUpdate: string | null;
@@ -76,10 +78,11 @@ export function recordPlay(): Promise<GameStatus> {
 
 export async function claimPlayerName(name: string): Promise<string> {
   try {
-    const response = await request<{ ok: true; name: string }>('/api/player', {
+    const response = await request<PlayerNameResponse>('/api/player', {
       method: 'POST',
       body: JSON.stringify({ name }),
     });
+    setPlayerSkinAccess(response.name, response.skinIds ?? []);
     return response.name;
   } catch (error) {
     if (error instanceof ApiRequestError && error.status === 409) {
@@ -91,9 +94,10 @@ export async function claimPlayerName(name: string): Promise<string> {
 
 export async function checkPlayerName(name: string): Promise<string> {
   try {
-    const response = await request<{ ok: true; name: string }>(
+    const response = await request<PlayerNameResponse>(
       `/api/player?name=${encodeURIComponent(name)}`,
     );
+    setPlayerSkinAccess(response.name, response.skinIds ?? []);
     return response.name;
   } catch (error) {
     if (error instanceof ApiRequestError && error.status === 409) {
@@ -272,6 +276,12 @@ async function leaderboardResult(submissionId: string, mode: LeaderboardMode): P
   const submittedRank = entries.findIndex((entry) => entry.id === submissionId);
   if (submittedRank >= 0) return { rank: submittedRank + 1, newRecord: true };
   return { rank: null, newRecord: false };
+}
+
+interface PlayerNameResponse {
+  ok: true;
+  name: string;
+  skinIds?: string[];
 }
 
 export function getChangelog(): Promise<{ repository: string; entries: ChangelogEntry[] }> {

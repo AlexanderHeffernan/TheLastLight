@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
@@ -20,6 +20,7 @@ const MAX_JSON_BODY_BYTES = 256 * 1024;
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const MAX_RATE_LIMIT_ENTRIES = 10_000;
+const skinAdminToken = process.env.SKIN_ADMIN_TOKEN?.trim() || undefined;
 
 await Promise.all([gameStore.load(), changelog.load(), privateRooms.load()]);
 
@@ -62,7 +63,14 @@ const server = createServer(async (request, response) => {
     if (offerPath && request.method === 'GET') {
       if (!allow(request, 'private-room-offer-poll', 240)) return json(response, { error: 'Too many requests' }, 429);
       const result = privateRooms.listOffers(decodeURIComponent(offerPath[1]), hostToken(request));
-      if (result.ok) return json(response, { offers: result.value });
+      if (result.ok) {
+        return json(response, {
+          offers: result.value.map((offer) => ({
+            ...offer,
+            skinIds: gameStore.playerSkinIds(offer.callsign),
+          })),
+        });
+      }
       return json(response, { error: result.message }, result.status);
     }
     const answerPath = /^\/api\/private-rooms\/([^/]+)\/answers$/.exec(url.pathname);
@@ -153,6 +161,22 @@ const server = createServer(async (request, response) => {
       );
       if (result.ok) return json(response, { result: result.value });
       return json(response, { error: result.message }, result.status);
+    }
+    if (url.pathname === '/api/admin/skin-access') {
+      if (!skinAdminToken || !hasSkinAdminAccess(request, skinAdminToken)) {
+        return json(response, { error: 'Not found' }, 404);
+      }
+      if (!allow(request, 'skin-access-admin', 60)) return json(response, { error: 'Too many requests' }, 429);
+      if (request.method === 'GET') return json(response, { skinAccess: gameStore.skinAccessEntries() });
+      if (request.method !== 'POST' && request.method !== 'DELETE') {
+        return json(response, { error: 'Method not allowed' }, 405);
+      }
+      const body = await readJson(request);
+      const result = request.method === 'POST'
+        ? await gameStore.grantSkinAccess(body.skinId, body.callsign)
+        : await gameStore.revokeSkinAccess(body.skinId, body.callsign);
+      if (!result.ok) return json(response, { error: result.message }, 400);
+      return json(response, result);
     }
     if (request.method === 'GET' && url.pathname === '/api/player') {
       if (!allow(request, 'player-check', 60)) return json(response, { error: 'Too many requests' }, 429);
@@ -383,6 +407,14 @@ function hostToken(request: IncomingMessage): string | undefined {
 function headerValue(request: IncomingMessage, name: string): string | undefined {
   const value = request.headers[name];
   return Array.isArray(value) ? value[0] : value;
+}
+
+function hasSkinAdminAccess(request: IncomingMessage, expectedToken: string): boolean {
+  const authorization = headerValue(request, 'authorization');
+  if (!authorization?.startsWith('Bearer ')) return false;
+  const received = Buffer.from(authorization.slice('Bearer '.length));
+  const expected = Buffer.from(expectedToken);
+  return received.length === expected.length && timingSafeEqual(received, expected);
 }
 
 function nameClaimStatus(reason: 'invalid' | 'name-taken' | 'capacity'): number {

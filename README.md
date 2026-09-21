@@ -18,7 +18,7 @@ The current release is a complete score-attack survival game. Runs are intention
 - A wave director that escalates pressure and introduces threats over time
 - Generator-fabricated flares and delayed supply drops containing health, adrenaline, or flare charges
 - Procedural monster vocals and combat audio with a rotating original soundtrack
-- Persistent global deployment count, leaderboard, and repository-driven changelog
+- Persistent global deployment count, leaderboard, special skin access, and repository-driven changelog
 - Private two-player WebRTC sessions with host-authoritative simulation
 - Development-only collision visualization that is excluded from production builds
 
@@ -95,14 +95,30 @@ docker compose down
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `3000` | Internal HTTP server port |
-| `DATA_DIR` | `/data` | Persistent scores, callsign claims, and private-room recovery state |
+| `DATA_DIR` | `/data` | Persistent scores, callsign claims, special skin access, and private-room recovery state |
 | `TRUST_PROXY` | `false` | Trust `CF-Connecting-IP`/`X-Forwarded-For` only when the server is behind a trusted reverse proxy |
+| `SKIN_ADMIN_TOKEN` | unset | Bearer token for the protected special-skin access management endpoint |
 | `CHANGELOG_REPOSITORY` | `AlexanderHeffernan/TheLastLight` | Repository queried for recent changes |
 | `GITHUB_TOKEN` | unset | Optional token for higher GitHub API limits |
 | `BUILD_TIMESTAMP` | startup time | Millisecond build time shown on the menu |
 | `LAST_UPDATE` | unset | Explicit ISO update time override |
 
 See [`.env.example`](.env.example) for a local template.
+
+### Manage special skin access
+
+On first startup, the server seeds the existing special-skin callsigns into `game-data.json` in `DATA_DIR`. After that, the file is the persistent source of truth and the client receives the matching skin IDs when it verifies a callsign. The server keeps this small access table in memory, so it does not add a database read to gameplay or menu rendering.
+
+Set a long random `SKIN_ADMIN_TOKEN` in the server environment, then use the protected endpoint to add or remove access without editing the file by hand:
+
+```sh
+curl -X POST https://your-game-host.example/api/admin/skin-access \
+  -H "Authorization: Bearer $SKIN_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"skinId":"alexander_heffernan","callsign":"NewSurvivor"}'
+```
+
+Use `GET` on the same endpoint to inspect the table, or `DELETE` with the same JSON body to revoke an entry. The endpoint is disabled unless `SKIN_ADMIN_TOKEN` is configured. The available skin IDs are `alexander_heffernan`, `galen_green`, `cara_lill`, and `oliver_heffernan`.
 
 ## Scripts
 
@@ -132,7 +148,7 @@ See [`.env.example`](.env.example) for a local template.
 - A deployment is counted when a gameplay run starts, including redeployments.
 - Leaderboard records rank by eliminations, then survival time, and retain one best solo run per anonymous browser profile and one best duo run per normalized callsign pair. A long-lived first-party cookie claims callsigns across both modes, so a callsign first used in a duo is protected just like one first used in solo. The public client submits these records, so the leaderboard is intended for friendly competition rather than cheat-proof verification.
 - Duo gameplay remains direct browser-to-browser WebRTC; the server brokers signaling and reconnection offers but does not relay gameplay traffic. Networks that prohibit all direct peer paths require a separately configured relay service.
-- Persistent data is written through a serialized queue to a temporary file and atomically renamed.
+- Persistent JSON data, including special skin access, is loaded into memory and written through a serialized queue to a temporary file before being atomically renamed. This keeps Raspberry Pi reads fast while preserving the existing crash-safe storage approach.
 - GitHub Actions publishes both ARM64 and AMD64 images to GHCR on pushes to `main`.
 
 ## Contributing

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { validatePlayerName } from '../src/shared/nameValidator.js';
+import { SECRET_PLAYER_SKIN_IDS } from '../src/shared/playerSkinIds.js';
 
 export interface LeaderboardEntry {
   id: string;
@@ -28,17 +29,33 @@ interface GameData {
   playCount: number;
   leaderboard: StoredLeaderboardEntry[];
   callsignClaims: Record<string, string>;
+  skinAccess: Record<string, string[]>;
 }
 
 export type NameClaimResult =
-  | { ok: true; name: string }
+  | { ok: true; name: string; skinIds: string[] }
   | { ok: false; reason: 'invalid' | 'name-taken' | 'capacity'; message: string };
 
 export type ScoreSubmissionResult =
   | { ok: true; entry: LeaderboardEntry }
   | { ok: false; reason: 'invalid' | 'name-taken' | 'capacity' };
 
-const EMPTY_DATA: GameData = { playCount: 0, leaderboard: [], callsignClaims: Object.create(null) };
+export type SkinAccessMutationResult =
+  | { ok: true; skinId: string; callsign: string; changed: boolean }
+  | { ok: false; reason: 'invalid-skin' | 'invalid-callsign'; message: string };
+
+const DEFAULT_SKIN_ACCESS: Record<string, string[]> = {
+  alexander_heffernan: ['AlexH', 'Alex'],
+  galen_green: ['Galen'],
+  cara_lill: ['LilCar'],
+  oliver_heffernan: ['Ollie', 'Heffo'],
+};
+const EMPTY_DATA: GameData = {
+  playCount: 0,
+  leaderboard: [],
+  callsignClaims: Object.create(null),
+  skinAccess: normalizeSkinAccess(DEFAULT_SKIN_ACCESS),
+};
 const LEADERBOARD_LIMIT = 10;
 const MAX_CALLSIGN_CLAIMS = 100_000;
 
@@ -53,6 +70,7 @@ export class GameStore {
   async load(): Promise<void> {
     try {
       const parsed = JSON.parse(await readFile(this.path, 'utf8')) as Partial<GameData>;
+      const hasSkinAccess = Object.prototype.hasOwnProperty.call(parsed, 'skinAccess');
       this.data = {
         playCount: validInteger(parsed.playCount, 0, Number.MAX_SAFE_INTEGER) ?? 0,
         leaderboard: Array.isArray(parsed.leaderboard)
@@ -62,18 +80,68 @@ export class GameStore {
             .sort(compareScores))
           : [],
         callsignClaims: normalizeCallsignClaims(parsed.callsignClaims),
+        skinAccess: hasSkinAccess
+          ? normalizeSkinAccess(parsed.skinAccess)
+          : normalizeSkinAccess(DEFAULT_SKIN_ACCESS),
       };
       this.data.leaderboard = limitLeaderboardByMode(this.data.leaderboard);
       await this.queueSave();
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn(`Could not load game data: ${errorMessage(error)}`);
-      }
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.data = structuredClone(EMPTY_DATA);
+        await this.queueSave();
+      } else console.warn(`Could not load game data: ${errorMessage(error)}`);
     }
   }
 
   status(): { playCount: number } {
     return { playCount: this.data.playCount };
+  }
+
+  skinAccessEntries(): Record<string, string[]> {
+    return Object.fromEntries(SECRET_PLAYER_SKIN_IDS.map((skinId) => [
+      skinId,
+      [...(this.data.skinAccess[skinId] ?? [])],
+    ]));
+  }
+
+  playerSkinIds(callsign: unknown): string[] {
+    if (typeof callsign !== 'string') return [];
+    const nameResult = validatePlayerName(callsign);
+    if (!nameResult.ok) return [];
+    const key = callsignKey(nameResult.name);
+    return SECRET_PLAYER_SKIN_IDS.filter((skinId) => (
+      this.data.skinAccess[skinId]?.some((match) => callsignKey(match) === key)
+    ));
+  }
+
+  async grantSkinAccess(skinIdValue: unknown, callsignValue: unknown): Promise<SkinAccessMutationResult> {
+    const skinId = validSkinId(skinIdValue);
+    if (!skinId) return { ok: false, reason: 'invalid-skin', message: 'Unknown special skin.' };
+    const callsign = validatedSkinCallsign(callsignValue);
+    if (!callsign) return { ok: false, reason: 'invalid-callsign', message: 'Invalid callsign.' };
+    const callsigns = this.data.skinAccess[skinId] ?? (this.data.skinAccess[skinId] = []);
+    const changed = !callsigns.some((match) => callsignKey(match) === callsignKey(callsign));
+    if (changed) {
+      callsigns.push(callsign);
+      await this.queueSave();
+    }
+    return { ok: true, skinId, callsign, changed };
+  }
+
+  async revokeSkinAccess(skinIdValue: unknown, callsignValue: unknown): Promise<SkinAccessMutationResult> {
+    const skinId = validSkinId(skinIdValue);
+    if (!skinId) return { ok: false, reason: 'invalid-skin', message: 'Unknown special skin.' };
+    const callsign = validatedSkinCallsign(callsignValue);
+    if (!callsign) return { ok: false, reason: 'invalid-callsign', message: 'Invalid callsign.' };
+    const callsigns = this.data.skinAccess[skinId] ?? [];
+    const remaining = callsigns.filter((match) => callsignKey(match) !== callsignKey(callsign));
+    const changed = remaining.length !== callsigns.length;
+    if (changed) {
+      this.data.skinAccess[skinId] = remaining;
+      await this.queueSave();
+    }
+    return { ok: true, skinId, callsign, changed };
   }
 
   entries(playerId: string, mode: LeaderboardMode = 'solo'): PlayerLeaderboardEntry[] {
@@ -134,7 +202,7 @@ export class GameStore {
       return { ok: false, reason: 'capacity', message: 'The callsign registry is temporarily full.' };
     }
 
-    return { ok: true, name: nameResult.name };
+    return { ok: true, name: nameResult.name, skinIds: this.playerSkinIds(nameResult.name) };
   }
 
   async claimName(name: unknown, playerId: string): Promise<NameClaimResult> {
@@ -298,6 +366,40 @@ function normalizeCallsignClaims(value: unknown): Record<string, string> {
     if (count >= MAX_CALLSIGN_CLAIMS) break;
   }
   return claims;
+}
+
+function normalizeSkinAccess(value: unknown): Record<string, string[]> {
+  const access: Record<string, string[]> = Object.create(null);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return access;
+  const stored = value as Record<string, unknown>;
+  for (const skinId of SECRET_PLAYER_SKIN_IDS) {
+    const callsigns = stored[skinId];
+    if (!Array.isArray(callsigns)) continue;
+    const seen = new Set<string>();
+    access[skinId] = [];
+    for (const callsign of callsigns) {
+      const normalized = validatedSkinCallsign(callsign);
+      if (!normalized) continue;
+      const key = callsignKey(normalized);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      access[skinId].push(normalized);
+    }
+  }
+  return access;
+}
+
+function validSkinId(value: unknown): string | null {
+  return typeof value === 'string'
+    && (SECRET_PLAYER_SKIN_IDS as readonly string[]).includes(value)
+    ? value
+    : null;
+}
+
+function validatedSkinCallsign(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const result = validatePlayerName(value);
+  return result.ok ? result.name : null;
 }
 
 function callsignKey(name: string): string {

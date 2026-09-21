@@ -5,7 +5,11 @@ import type {
   DuoPlayerId,
   DuoSnapshot,
 } from './protocol';
-import { DEFAULT_PLAYER_SKIN_ID } from './playerSkins';
+import {
+  DEFAULT_PLAYER_SKIN_ID,
+  getPlayerSkinAccessIds,
+  setPlayerSkinAccess,
+} from './playerSkins';
 
 const SIGNAL_POLL_MS = 650;
 const SESSION_TIMEOUT_MS = 120000;
@@ -39,6 +43,7 @@ interface OfferResponse {
   offers: Array<{
     peerId: string;
     callsign: string;
+    skinIds?: string[];
     offer: RTCSessionDescriptionInit;
   }>;
 }
@@ -143,6 +148,8 @@ export class DuoSession {
       guestCallsign: options.role === 'guest' ? options.localCallsign : '',
       hostSkinId: options.role === 'host' ? options.skinId : DEFAULT_PLAYER_SKIN_ID,
       guestSkinId: options.role === 'guest' ? options.skinId : DEFAULT_PLAYER_SKIN_ID,
+      hostSkinIds: options.role === 'host' ? getPlayerSkinAccessIds(options.localCallsign) : [],
+      guestSkinIds: options.role === 'guest' ? getPlayerSkinAccessIds(options.localCallsign) : [],
       hostAim: DEFAULT_LOBBY_AIM,
       guestAim: DEFAULT_LOBBY_AIM,
       guestConnected: false,
@@ -252,6 +259,8 @@ export class DuoSession {
       guestCallsign: this.lobby.guestCallsign,
       hostSkinId: this.lobby.hostSkinId,
       guestSkinId: this.lobby.guestSkinId,
+      hostSkinIds: this.lobby.hostSkinIds,
+      guestSkinIds: this.lobby.guestSkinIds,
       hostAim: this.lobby.hostAim,
       guestAim: this.lobby.guestAim,
     });
@@ -351,6 +360,7 @@ export class DuoSession {
     this.lastInputSequence = -1;
     this.started = false;
     this.lobby.guestCallsign = '';
+    this.lobby.guestSkinIds = [];
     this.lobby.guestAim = DEFAULT_LOBBY_AIM;
     this.lobby.guestConnected = false;
     this.lobby.started = false;
@@ -418,7 +428,9 @@ export class DuoSession {
         answer: peer.localDescription,
       }),
     });
+    setPlayerSkinAccess(offer.callsign, offer.skinIds ?? []);
     this.lobby.guestCallsign = offer.callsign;
+    this.lobby.guestSkinIds = getPlayerSkinAccessIds(offer.callsign);
     this.emitLobby();
   }
 
@@ -764,10 +776,18 @@ export class DuoSession {
       return;
     }
     if (message.type === 'start' && this.role === 'guest') {
-      this.lobby.hostCallsign = String(message.hostCallsign ?? '').slice(0, 18);
-      this.lobby.guestCallsign = String(message.guestCallsign ?? '').slice(0, 18);
+      const hostCallsign = String(message.hostCallsign ?? '').slice(0, 18);
+      const guestCallsign = String(message.guestCallsign ?? '').slice(0, 18);
+      const hostSkinIds = skinIdsFromMessage(message.hostSkinIds);
+      const guestSkinIds = skinIdsFromMessage(message.guestSkinIds);
+      setPlayerSkinAccess(hostCallsign, hostSkinIds);
+      setPlayerSkinAccess(guestCallsign, guestSkinIds);
+      this.lobby.hostCallsign = hostCallsign;
+      this.lobby.guestCallsign = guestCallsign;
       this.lobby.hostSkinId = String(message.hostSkinId ?? this.lobby.hostSkinId);
       this.lobby.guestSkinId = String(message.guestSkinId ?? this.lobby.guestSkinId);
+      this.lobby.hostSkinIds = getPlayerSkinAccessIds(hostCallsign);
+      this.lobby.guestSkinIds = getPlayerSkinAccessIds(guestCallsign);
       this.lobby.hostAim = normalizeLobbyAim(Number(message.hostAim ?? this.lobby.hostAim));
       this.lobby.guestAim = normalizeLobbyAim(Number(message.guestAim ?? this.lobby.guestAim));
       this.lobby.started = true;
@@ -778,12 +798,20 @@ export class DuoSession {
     }
     if (message.type === 'lobby' && this.role === 'guest') {
       const state = message.state as Partial<DuoLobbyState>;
+      const hostCallsign = String(state.hostCallsign ?? this.lobby.hostCallsign);
+      const guestCallsign = String(state.guestCallsign ?? this.lobby.guestCallsign);
+      const hostSkinIds = skinIdsFromMessage(state.hostSkinIds);
+      const guestSkinIds = skinIdsFromMessage(state.guestSkinIds);
+      setPlayerSkinAccess(hostCallsign, hostSkinIds);
+      setPlayerSkinAccess(guestCallsign, guestSkinIds);
       this.lobby = {
         ...this.lobby,
-        hostCallsign: String(state.hostCallsign ?? this.lobby.hostCallsign),
-        guestCallsign: String(state.guestCallsign ?? this.lobby.guestCallsign),
+        hostCallsign,
+        guestCallsign,
         hostSkinId: String(state.hostSkinId ?? this.lobby.hostSkinId),
         guestSkinId: String(state.guestSkinId ?? this.lobby.guestSkinId),
+        hostSkinIds: getPlayerSkinAccessIds(hostCallsign),
+        guestSkinIds: getPlayerSkinAccessIds(guestCallsign),
         hostAim: normalizeLobbyAim(Number(state.hostAim ?? this.lobby.hostAim)),
         guestAim: normalizeLobbyAim(Number(state.guestAim ?? this.lobby.guestAim)),
         guestConnected: Boolean(state.guestConnected),
@@ -1027,6 +1055,10 @@ async function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
 
 function normalizeRoomCode(value: string): string {
   return value.trim().replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 6);
+}
+
+function skinIdsFromMessage(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((skinId): skinId is string => typeof skinId === 'string') : [];
 }
 
 function normalizeLobbyAim(value: number): number {
