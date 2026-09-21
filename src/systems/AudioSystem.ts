@@ -1,12 +1,12 @@
 import Phaser from 'phaser';
-import { BOSS_MUSIC_KEYS, DEFEAT_MUSIC_KEYS, MUSIC_KEYS } from '../assets/manifest';
+import { BOSS_MUSIC_KEYS, DEFEAT_MUSIC_KEYS, MUSIC_KEYS, MUSIC_URLS } from '../assets/manifest';
 import type { DuoOscillatorType, DuoPlayerId, DuoSoundEffect } from '../network/protocol';
 
 const MUSIC_VOLUME = 0.16;
 const MUSIC_CROSSFADE_MS = 1100;
 
 type BossMusicKind = keyof typeof BOSS_MUSIC_KEYS;
-type MusicSound = Phaser.Sound.WebAudioSound | Phaser.Sound.HTML5AudioSound;
+type MusicTrack = HTMLAudioElement;
 
 interface AudioPosition {
   x: number;
@@ -36,12 +36,15 @@ const BOSS_MUSIC_PRIORITY: Record<BossMusicKind, number> = {
 };
 
 export class AudioSystem {
-  private music?: MusicSound;
+  private music?: MusicTrack;
   private musicKey?: string;
   private lastMusicKey?: string;
   private bossSequence = 0;
   private readonly bossEncounters = new Map<number, BossEncounter>();
-  private readonly musicTracks = new Set<MusicSound>();
+  private readonly musicTracks = new Set<MusicTrack>();
+  private readonly pendingMusicPlays = new Map<MusicTrack, number>();
+  private musicUnlockHandler?: () => void;
+  private musicPaused = false;
   private fadingOut = false;
   private destroyed = false;
   private readonly onCue?: (cue: MusicCue) => void;
@@ -60,17 +63,19 @@ export class AudioSystem {
   }
 
   startMusic(): void {
-    const play = () => {
-      if (this.destroyed) return;
-      const boss = this.activeBossEncounter();
-      if (boss) this.transitionTo(BOSS_MUSIC_KEYS[boss.kind], true);
-      else this.playNextMusicTrack();
-    };
-    if (this.scene.sound.locked) {
-      this.scene.sound.once(Phaser.Sound.Events.UNLOCKED, play);
-    } else {
-      play();
+    if (this.destroyed) return;
+    const boss = this.activeBossEncounter();
+    if (boss) this.transitionTo(BOSS_MUSIC_KEYS[boss.kind], true);
+    else this.playNextMusicTrack();
+  }
+
+  setPaused(paused: boolean): void {
+    this.musicPaused = paused;
+    if (paused) {
+      this.musicTracks.forEach((track) => track.pause());
+      return;
     }
+    if (this.music) this.playTrack(this.music, this.pendingMusicPlays.get(this.music) ?? 0);
   }
 
   beginBossTheme(kind: BossMusicKind): number {
@@ -123,9 +128,7 @@ export class AudioSystem {
       ease: 'Sine.easeInOut',
       onComplete: () => {
         tracks.forEach((track) => {
-          track.stop();
-          track.destroy();
-          this.musicTracks.delete(track);
+          this.releaseMusicTrack(track);
         });
         this.music = undefined;
         this.musicKey = undefined;
@@ -151,23 +154,35 @@ export class AudioSystem {
 
   private transitionTo(key: string, loop: boolean, seek = 0, notify = true): void {
     if (this.destroyed || (this.musicKey === key && this.music)) return;
+    const url = MUSIC_URLS[key];
+    if (!url) return;
 
     const previous = this.music;
-    const track = this.scene.sound.add(key, { volume: previous ? 0 : MUSIC_VOLUME, loop }) as MusicSound;
+    const track = new Audio();
+    track.preload = 'auto';
+    track.loop = loop;
+    track.volume = previous && !this.musicPaused ? 0 : MUSIC_VOLUME;
+    track.setAttribute('playsinline', '');
+    track.setAttribute('aria-hidden', 'true');
+    track.src = url;
     this.musicTracks.add(track);
     this.music = track;
     this.musicKey = key;
     if (notify) this.onCue?.({ key, loop });
-    track.once(Phaser.Sound.Events.COMPLETE, () => {
+    track.addEventListener('ended', () => {
       if (this.music !== track || this.destroyed) return;
       this.music = undefined;
       this.musicKey = undefined;
-      this.musicTracks.delete(track);
-      track.destroy();
+      this.releaseMusicTrack(track);
       this.playNextMusicTrack();
     });
-    track.play({ seek: Math.min(seek, Math.max(0, track.duration - 20)) });
+    this.playTrack(track, seek);
     if (!previous) return;
+
+    if (this.musicPaused) {
+      this.releaseMusicTrack(previous);
+      return;
+    }
 
     this.scene.tweens.killTweensOf(previous);
     this.scene.tweens.killTweensOf(track);
@@ -184,11 +199,67 @@ export class AudioSystem {
       ease: 'Sine.easeInOut',
       onComplete: () => {
         if (this.music === previous) return;
-        previous.stop();
-        previous.destroy();
-        this.musicTracks.delete(previous);
+        this.releaseMusicTrack(previous);
       },
     });
+  }
+
+  private playTrack(track: MusicTrack, seek = 0): void {
+    if (this.destroyed || this.musicPaused || this.music !== track) return;
+    if (seek > 0) {
+      const applySeek = () => {
+        if (this.destroyed || this.music !== track || !Number.isFinite(track.duration)) return;
+        track.currentTime = Math.min(seek, Math.max(0, track.duration - 20));
+      };
+      if (track.readyState >= HTMLMediaElement.HAVE_METADATA) applySeek();
+      else track.addEventListener('loadedmetadata', applySeek, { once: true });
+    }
+
+    const playPromise = track.play();
+    if (!playPromise) return;
+    void playPromise.then(() => {
+      this.pendingMusicPlays.delete(track);
+      this.removeMusicUnlockHandlerIfIdle();
+    }).catch((error: unknown) => {
+      if (this.destroyed || this.music !== track) return;
+      const name = error && typeof error === 'object' && 'name' in error
+        ? String(error.name)
+        : '';
+      if (name !== 'NotAllowedError') return;
+      this.pendingMusicPlays.set(track, seek);
+      this.installMusicUnlockHandler();
+    });
+  }
+
+  private installMusicUnlockHandler(): void {
+    if (this.musicUnlockHandler) return;
+    this.musicUnlockHandler = () => {
+      if (this.destroyed) return;
+      [...this.pendingMusicPlays.entries()].forEach(([track, seek]) => {
+        if (track !== this.music) this.pendingMusicPlays.delete(track);
+        else this.playTrack(track, seek);
+      });
+      this.removeMusicUnlockHandlerIfIdle();
+    };
+    document.addEventListener('pointerdown', this.musicUnlockHandler);
+    document.addEventListener('keydown', this.musicUnlockHandler);
+  }
+
+  private removeMusicUnlockHandlerIfIdle(): void {
+    if (this.pendingMusicPlays.size > 0 || !this.musicUnlockHandler) return;
+    document.removeEventListener('pointerdown', this.musicUnlockHandler);
+    document.removeEventListener('keydown', this.musicUnlockHandler);
+    this.musicUnlockHandler = undefined;
+  }
+
+  private releaseMusicTrack(track: MusicTrack): void {
+    this.scene.tweens.killTweensOf(track);
+    this.pendingMusicPlays.delete(track);
+    track.pause();
+    track.removeAttribute('src');
+    track.load();
+    this.musicTracks.delete(track);
+    this.removeMusicUnlockHandlerIfIdle();
   }
 
   playTone(
@@ -353,11 +424,13 @@ export class AudioSystem {
   private destroy(): void {
     this.destroyed = true;
     this.bossEncounters.clear();
-    this.musicTracks.forEach((track) => {
-      this.scene.tweens.killTweensOf(track);
-      track.stop();
-      track.destroy();
-    });
+    if (this.musicUnlockHandler) {
+      document.removeEventListener('pointerdown', this.musicUnlockHandler);
+      document.removeEventListener('keydown', this.musicUnlockHandler);
+      this.musicUnlockHandler = undefined;
+    }
+    [...this.musicTracks].forEach((track) => this.releaseMusicTrack(track));
+    this.pendingMusicPlays.clear();
     this.musicTracks.clear();
     this.music = undefined;
     this.musicKey = undefined;

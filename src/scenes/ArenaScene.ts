@@ -2910,6 +2910,7 @@ export class ArenaScene extends Phaser.Scene {
       this.anims.pauseAll();
       this.tweens.pauseAll();
       this.sound.pauseAll?.();
+      this.audio.setPaused(true);
       this.monsterAudio.setPaused(true);
       return;
     }
@@ -2921,6 +2922,7 @@ export class ArenaScene extends Phaser.Scene {
     this.anims.resumeAll();
     this.tweens.resumeAll();
     this.sound.resumeAll?.();
+    this.audio.setPaused(false);
     this.monsterAudio.setPaused(false);
   }
 

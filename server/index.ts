@@ -268,8 +268,9 @@ async function serveStatic(request: IncomingMessage, response: ServerResponse, p
   if (filePath !== clientDirectory && !filePath.startsWith(`${clientDirectory}${sep}`)) {
     return json(response, { error: 'Not found' }, 404);
   }
+  let fileStat;
   try {
-    let fileStat = await stat(filePath);
+    fileStat = await stat(filePath);
     if (fileStat.isDirectory()) {
       filePath = resolve(filePath, 'index.html');
       fileStat = await stat(filePath);
@@ -278,16 +279,52 @@ async function serveStatic(request: IncomingMessage, response: ServerResponse, p
   } catch {
     if (!extname(relativePath)) filePath = resolve(clientDirectory, 'index.html');
     else return json(response, { error: 'Not found' }, 404);
+    fileStat = await stat(filePath);
   }
-  response.statusCode = 200;
+
+  const rangeHeader = request.headers.range;
+  const range = typeof rangeHeader === 'string' ? parseByteRange(rangeHeader, fileStat.size) : undefined;
+  if (rangeHeader && !range) {
+    response.statusCode = 416;
+    response.setHeader('content-range', `bytes */${fileStat.size}`);
+    response.end();
+    return;
+  }
+
+  response.statusCode = range ? 206 : 200;
   response.setHeader('content-type', mimeType(filePath));
   response.setHeader('x-content-type-options', 'nosniff');
   response.setHeader('cache-control', filePath.includes('/assets/') ? 'public, max-age=31536000, immutable' : 'public, max-age=300');
+  response.setHeader('accept-ranges', 'bytes');
+  response.setHeader('content-length', String(range ? range.end - range.start + 1 : fileStat.size));
+  if (range) response.setHeader('content-range', `bytes ${range.start}-${range.end}/${fileStat.size}`);
   if (request.method === 'HEAD') {
     response.end();
     return;
   }
-  createReadStream(filePath).pipe(response);
+  createReadStream(filePath, range ? { start: range.start, end: range.end } : undefined).pipe(response);
+}
+
+function parseByteRange(value: string, size: number): { start: number; end: number } | undefined {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match || size <= 0 || (!match[1] && !match[2])) return undefined;
+  const requestedStart = match[1] ? Number(match[1]) : undefined;
+  const requestedEnd = match[2] ? Number(match[2]) : undefined;
+  if (requestedStart !== undefined && !Number.isSafeInteger(requestedStart)) return undefined;
+  if (requestedEnd !== undefined && !Number.isSafeInteger(requestedEnd)) return undefined;
+
+  if (requestedStart === undefined) {
+    const suffixLength = requestedEnd ?? 0;
+    if (suffixLength <= 0) return undefined;
+    return { start: Math.max(0, size - suffixLength), end: size - 1 };
+  }
+
+  if (requestedStart >= size) return undefined;
+  if (requestedEnd !== undefined && requestedEnd < requestedStart) return undefined;
+  return {
+    start: requestedStart,
+    end: Math.min(requestedEnd ?? size - 1, size - 1),
+  };
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {

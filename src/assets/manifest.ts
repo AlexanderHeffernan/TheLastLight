@@ -44,18 +44,15 @@ import repairKitUrl from './supplies/field_repair_kit_64.png';
 import flareCartridgeUrl from './supplies/flare_cartridge_64.png';
 import ashesAtDawnUrl from './audio/ashes-at-dawn.mp3';
 import lastBarricadeUrl from './audio/Last Barricade.mp3';
-import lastBarricadeAlternateUrl from './audio/Last Barricade-2.mp3';
 import breakerThemeUrl from './audio/THE BREAKER.mp3';
 import furnaceThemeUrl from './audio/THE FURNACE.mp3';
 import lurkerThemeUrl from './audio/THE LURKER.mp3';
 import spitterThemeUrl from './audio/THE SPITTER.mp3';
 import defeatThemeUrl from './audio/Ashes Keep Moving.mp3';
-import defeatThemeAlternateUrl from './audio/Ashes Keep Moving-2.mp3';
 
 const musicTracks = [
   ['music-ashes-at-dawn', ashesAtDawnUrl],
   ['music-last-barricade', lastBarricadeUrl],
-  ['music-last-barricade-alternate', lastBarricadeAlternateUrl],
 ] as const;
 
 export const MUSIC_KEYS = musicTracks.map(([key]) => key);
@@ -76,10 +73,15 @@ const bossMusicTracks = [
 
 const defeatMusicTracks = [
   ['music-defeat-ashes-keep-moving', defeatThemeUrl],
-  ['music-defeat-ashes-keep-moving-alternate', defeatThemeAlternateUrl],
 ] as const;
 
 export const DEFEAT_MUSIC_KEYS = defeatMusicTracks.map(([key]) => key);
+
+export const MUSIC_URLS: Readonly<Record<string, string>> = Object.fromEntries([
+  ...musicTracks,
+  ...bossMusicTracks,
+  ...defeatMusicTracks,
+]);
 
 export function loadAssets(scene: Phaser.Scene): void {
   scene.load.image('soldier', soldierUrl);
@@ -125,7 +127,4 @@ export function loadAssets(scene: Phaser.Scene): void {
   scene.load.spritesheet('bullet-impact', bulletImpactUrl, { frameWidth: 32, frameHeight: 32 });
   scene.load.spritesheet('blood-hit', bloodHitUrl, { frameWidth: 32, frameHeight: 32 });
   scene.load.spritesheet('ground-fire', groundFireUrl, { frameWidth: 64, frameHeight: 64 });
-  musicTracks.forEach(([key, url]) => scene.load.audio(key, url));
-  bossMusicTracks.forEach(([key, url]) => scene.load.audio(key, url));
-  defeatMusicTracks.forEach(([key, url]) => scene.load.audio(key, url));
 }

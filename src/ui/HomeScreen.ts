@@ -12,7 +12,6 @@ import {
 } from '../api/client';
 import { hasTouchControls } from '../config/controls';
 import lastNightAliveUrl from '../assets/audio/Last Night Alive.mp3';
-import lastNightAliveAlternateUrl from '../assets/audio/Last Night Alive-2.mp3';
 import { validatePlayerName } from '../shared/nameValidator';
 import { DuoSession } from '../network/duoSession';
 import {
@@ -33,7 +32,7 @@ interface HomeScreenOptions {
 const CALLSIGN_KEY = 'the-last-light-callsign';
 const SKIN_KEY = 'the-last-light-skin';
 const HOME_MUSIC_VOLUME = 0.16;
-const HOME_MUSIC_TRACKS = [lastNightAliveUrl, lastNightAliveAlternateUrl];
+const HOME_MUSIC_TRACKS = [lastNightAliveUrl];
 const DEFAULT_LOBBY_AIM = -Math.PI / 2;
 
 export class HomeScreen {
@@ -52,7 +51,7 @@ export class HomeScreen {
   private readonly duoContent = element<HTMLElement>('duo-content');
   private menuMusic?: HTMLAudioElement;
   private menuFadeFrame?: number;
-  private menuUnlockHandler?: () => void;
+  private menuUnlockHandler?: (event: Event) => void;
   private deploying = false;
   private callsignCheckTimer?: number;
   private callsignCheckGeneration = 0;
@@ -1069,19 +1068,21 @@ export class HomeScreen {
 
   private startMenuMusic(): void {
     this.stopMenuMusic();
-    const audio = new Audio(HOME_MUSIC_TRACKS[Math.floor(Math.random() * HOME_MUSIC_TRACKS.length)]);
+    const audio = new Audio();
+    audio.preload = 'none';
     audio.loop = true;
     audio.volume = HOME_MUSIC_VOLUME;
     this.menuMusic = audio;
-    void audio.play().catch(() => {
+    this.menuUnlockHandler = (event: Event) => {
       if (this.menuMusic !== audio) return;
-      this.menuUnlockHandler = () => {
-        this.removeMenuUnlockHandler();
-        if (this.menuMusic === audio) void audio.play().catch(() => undefined);
-      };
-      document.addEventListener('pointerdown', this.menuUnlockHandler, { once: true });
-      document.addEventListener('keydown', this.menuUnlockHandler, { once: true });
-    });
+      const target = event.target;
+      if (target instanceof Element && target.closest('#deploy-form')) return;
+      this.removeMenuUnlockHandler();
+      audio.src = HOME_MUSIC_TRACKS[0];
+      void audio.play().catch(() => undefined);
+    };
+    document.addEventListener('pointerdown', this.menuUnlockHandler);
+    document.addEventListener('keydown', this.menuUnlockHandler);
   }
 
   private fadeOutMenuMusic(): void {
@@ -1100,6 +1101,8 @@ export class HomeScreen {
       }
       audio.pause();
       audio.currentTime = 0;
+      audio.removeAttribute('src');
+      audio.load();
       if (this.menuMusic === audio) this.menuMusic = undefined;
       this.menuFadeFrame = undefined;
     };
@@ -1113,6 +1116,8 @@ export class HomeScreen {
       this.menuFadeFrame = undefined;
     }
     this.menuMusic?.pause();
+    this.menuMusic?.removeAttribute('src');
+    this.menuMusic?.load();
     this.menuMusic = undefined;
   }
 
