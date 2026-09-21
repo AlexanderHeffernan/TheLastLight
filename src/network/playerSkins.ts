@@ -11,6 +11,19 @@ import mechanicSkinUrl from '../assets/characters/skins/mechanic_64.png';
 import oliverHeffernanSkinUrl from '../assets/characters/skins/oliver_heffernan_64.png';
 import topdownSoldierSkinUrl from '../assets/characters/skins/topdown_soldier_64.png';
 import urbanClimberSkinUrl from '../assets/characters/skins/urban_climber_64.png';
+import alexanderHeffernanHeadshotUrl from '../assets/characters/headshots/alexander_heffernan_headshot_32.png';
+import apartmentSurvivorHeadshotUrl from '../assets/characters/headshots/apartment_survivor_headshot_32.png';
+import blockGuardianHeadshotUrl from '../assets/characters/headshots/block_guardian_headshot_32.png';
+import caraLillHeadshotUrl from '../assets/characters/headshots/cara_lill_headshot_32.png';
+import courierHeadshotUrl from '../assets/characters/headshots/courier_headshot_32.png';
+import fieldMedicHeadshotUrl from '../assets/characters/headshots/field_medic_headshot_32.png';
+import galenGreenHeadshotUrl from '../assets/characters/headshots/galen_green_headshot_32.png';
+import homesteaderHeadshotUrl from '../assets/characters/headshots/homesteader_headshot_32.png';
+import hunterHeadshotUrl from '../assets/characters/headshots/hunter_headshot_32.png';
+import mechanicHeadshotUrl from '../assets/characters/headshots/mechanic_headshot_32.png';
+import oliverHeffernanHeadshotUrl from '../assets/characters/headshots/oliver_heffernan_headshot_32.png';
+import topdownSoldierHeadshotUrl from '../assets/characters/headshots/veteran_headshot_32.png';
+import urbanClimberHeadshotUrl from '../assets/characters/headshots/urban_climber_headshot_32.png';
 import { SECRET_PLAYER_SKIN_IDS } from '../shared/playerSkinIds';
 
 export interface PlayerSkin {
@@ -36,6 +49,22 @@ const skinPreviewUrls: Record<string, string> = {
   galen_green: galenGreenSkinUrl,
   cara_lill: caraLillSkinUrl,
   oliver_heffernan: oliverHeffernanSkinUrl,
+};
+
+const skinHeadshotUrls: Record<string, string> = {
+  topdown_soldier: topdownSoldierHeadshotUrl,
+  field_medic: fieldMedicHeadshotUrl,
+  mechanic: mechanicHeadshotUrl,
+  homesteader: homesteaderHeadshotUrl,
+  apartment_survivor: apartmentSurvivorHeadshotUrl,
+  hunter: hunterHeadshotUrl,
+  urban_climber: urbanClimberHeadshotUrl,
+  block_guardian: blockGuardianHeadshotUrl,
+  courier: courierHeadshotUrl,
+  alexander_heffernan: alexanderHeffernanHeadshotUrl,
+  galen_green: galenGreenHeadshotUrl,
+  cara_lill: caraLillHeadshotUrl,
+  oliver_heffernan: oliverHeffernanHeadshotUrl,
 };
 
 const publicSkins: PlayerSkin[] = [
@@ -190,6 +219,10 @@ export function getPlayerSkin(id: string | undefined, callsign: string): PlayerS
 
 export function getPlayerSkinPreviewUrl(skin: Pick<PlayerSkin, 'id'>): string {
   return skinPreviewUrls[skin.id] ?? skinPreviewUrls[DEFAULT_PLAYER_SKIN_ID];
+}
+
+export function getPlayerSkinHeadshotUrl(skin: Pick<PlayerSkin, 'id'>): string {
+  return skinHeadshotUrls[skin.id] ?? skinHeadshotUrls[DEFAULT_PLAYER_SKIN_ID];
 }
 
 let playerSkinPreviewPreload: Promise<void> | undefined;

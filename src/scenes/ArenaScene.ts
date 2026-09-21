@@ -16,7 +16,7 @@ import { MonsterAudioSystem, type MonsterType } from '../systems/MonsterAudioSys
 import { SupplySystem } from '../systems/SupplySystem';
 import { WaveDirector, type BossKind } from '../systems/WaveDirector';
 import { getGameLaunchOptions, type DuoLaunchOptions } from '../network/gameLaunch';
-import { getPlayerSkin } from '../network/playerSkins';
+import { getPlayerSkin, getPlayerSkinHeadshotUrl } from '../network/playerSkins';
 import type {
   BulletSnapshot,
   DuoEvent,
@@ -105,6 +105,8 @@ interface BossHazard {
 
 interface SquadHudDom {
   row: HTMLDivElement;
+  portraitFrame: HTMLDivElement;
+  portrait: HTMLImageElement;
   name: HTMLSpanElement;
   health: HTMLSpanElement;
   healthBack: HTMLDivElement;
@@ -125,12 +127,6 @@ interface PlayerActor {
   youLabel?: Phaser.GameObjects.Text;
   healthBack?: Phaser.GameObjects.Rectangle;
   healthBar?: Phaser.GameObjects.Rectangle;
-  squadPortrait?: Phaser.GameObjects.Image;
-  squadName?: Phaser.GameObjects.Text;
-  squadHealthText?: Phaser.GameObjects.Text;
-  squadHealthBack?: Phaser.GameObjects.Rectangle;
-  squadHealthBar?: Phaser.GameObjects.Rectangle;
-  squadEliminations?: Phaser.GameObjects.Text;
   squadDom?: SquadHudDom;
   health: number;
   alive: boolean;
@@ -160,8 +156,6 @@ interface HudPreview {
   guestAlive: boolean;
 }
 
-const SQUAD_TEXT_RESOLUTION = 3;
-const SQUAD_HUD_DEPTH = 100;
 const SNAPSHOT_RENDER_DELAY_MS = 100;
 const SNAPSHOT_INTERVAL_MS = 50;
 const BOSS_DEFINITIONS: Record<BossKind, BossDefinition> = {
@@ -1000,23 +994,19 @@ export class ArenaScene extends Phaser.Scene {
       ? 'YOU'
       : this.formatSquadName(actor.callsign);
 
-    if (down) actor.squadPortrait?.setTint(0x665653).setAlpha(0.58);
-    else actor.squadPortrait?.clearTint().setAlpha(1);
-    actor.squadName?.setText(displayName).setColor(down ? '#9a7d76' : textColor);
-    actor.squadHealthText?.setText(`${Math.round(healthRatio * 100)}%`)
-      .setColor(down ? '#c46b5e' : textColor);
-    actor.squadHealthBack?.setStrokeStyle(1, actor.color, down ? 0.32 : 0.65);
-    actor.squadHealthBar
-      ?.setScale(healthRatio, 1)
-      .setFillStyle(actor.health <= 35 ? 0xd4513f : actor.color, down ? 0.32 : 0.92);
-    actor.squadEliminations?.setText(`ELIMS ${String(actor.eliminations).padStart(5, '0')}`)
-      .setColor(down ? '#9a7d76' : '#f2e6d0');
-
     const squadDom = actor.squadDom;
     if (!squadDom) return;
     const playerColor = `#${actor.color.toString(16).padStart(6, '0')}`;
     const fillColor = actor.health <= 35 ? '#d4513f' : playerColor;
     const displayColor = down ? '#c46b5e' : textColor;
+    const headshotUrl = getPlayerSkinHeadshotUrl({ id: actor.skinId });
+    if (squadDom.portrait.dataset.skinId !== actor.skinId) {
+      squadDom.portrait.dataset.skinId = actor.skinId;
+      squadDom.portrait.src = headshotUrl;
+    }
+    squadDom.portrait.alt = `${displayName} headshot`;
+    squadDom.portraitFrame.style.opacity = down ? '0.58' : '1';
+    squadDom.portrait.style.filter = down ? 'grayscale(1) brightness(0.68)' : 'none';
     squadDom.row.style.setProperty('--squad-color', playerColor);
     squadDom.row.style.setProperty('--squad-fill-color', fillColor);
     squadDom.name.textContent = displayName;
@@ -2343,11 +2333,6 @@ export class ArenaScene extends Phaser.Scene {
     actor.healthBack?.setStrokeStyle(1, skin.color, 0.65);
     actor.healthBar?.setFillStyle(actor.health <= 35 ? 0xd4513f : skin.color, actor.alive ? 0.9 : 0.35);
     actor.nameLabel?.setColor(Phaser.Display.Color.IntegerToColor(skin.color).rgba);
-    actor.squadPortrait?.setTexture(skin.textureKey);
-    actor.squadName?.setColor(Phaser.Display.Color.IntegerToColor(skin.color).rgba);
-    actor.squadHealthText?.setColor(Phaser.Display.Color.IntegerToColor(skin.color).rgba);
-    actor.squadHealthBack?.setStrokeStyle(1, skin.color, actor.alive ? 0.65 : 0.32);
-    actor.squadHealthBar?.setFillStyle(actor.health <= 35 ? 0xd4513f : skin.color, actor.alive ? 0.92 : 0.32);
     if (fallbackColor !== undefined && !skinId) actor.color = fallbackColor;
   }
 
@@ -2722,6 +2707,14 @@ export class ArenaScene extends Phaser.Scene {
     row.style.top = `${16 + index * 45}px`;
     row.style.setProperty('--squad-color', `#${actor.color.toString(16).padStart(6, '0')}`);
 
+    const portraitFrame = document.createElement('div');
+    portraitFrame.className = 'squad-hud-portrait-frame';
+    const portrait = document.createElement('img');
+    portrait.className = 'squad-hud-portrait';
+    portrait.dataset.skinId = actor.skinId;
+    portrait.src = getPlayerSkinHeadshotUrl({ id: actor.skinId });
+    portrait.alt = `${actor.callsign} headshot`;
+    portraitFrame.append(portrait);
     const name = document.createElement('span');
     name.className = 'squad-hud-name';
     const health = document.createElement('span');
@@ -2734,9 +2727,9 @@ export class ArenaScene extends Phaser.Scene {
     eliminations.className = 'squad-hud-elims';
 
     healthBack.append(healthBar);
-    row.append(name, health, healthBack, eliminations);
+    row.append(portraitFrame, name, health, healthBack, eliminations);
     this.squadHudElement.append(row);
-    return { row, name, health, healthBack, healthBar, eliminations };
+    return { row, portraitFrame, portrait, name, health, healthBack, healthBar, eliminations };
   }
 
   makeInterface() {
@@ -2746,73 +2739,10 @@ export class ArenaScene extends Phaser.Scene {
       fontSize: '13px',
       color: '#ad8880',
     };
-    const squadX = 16;
-    const squadTop = 16;
-    const squadRowHeight = 41;
-    const squadGap = 4;
-    const squadHealthBarWidth = 115;
 
     [...this.playerActors.values()].forEach((actor, index) => {
       const color = Phaser.Display.Color.IntegerToColor(actor.color).rgba;
-      const rowX = squadX;
-      const rowY = squadTop + index * (squadRowHeight + squadGap);
       actor.squadDom = this.createSquadHudRow(actor, index);
-      actor.squadPortrait = this.add.image(rowX + 20, rowY + 20.5, actor.sprite.texture.key)
-        .setDisplaySize(30, 30)
-        .setDepth(SQUAD_HUD_DEPTH);
-      actor.squadName = this.add.text(
-        rowX + 40,
-        rowY + 4,
-        actor.id === this.localPlayerId ? 'YOU' : this.formatSquadName(actor.callsign),
-        {
-        ...labelStyle,
-        fontSize: '12px',
-        fontStyle: 'bold',
-        color,
-        stroke: '#070807',
-        strokeThickness: 2,
-        },
-      ).setResolution(SQUAD_TEXT_RESOLUTION).setDepth(SQUAD_HUD_DEPTH);
-      actor.squadHealthText = this.add.text(rowX + 40 + squadHealthBarWidth, rowY + 4, '100%', {
-        ...labelStyle,
-        fontSize: '11px',
-        fontStyle: 'bold',
-        color,
-        stroke: '#070807',
-        strokeThickness: 2,
-      }).setResolution(SQUAD_TEXT_RESOLUTION).setOrigin(1, 0).setDepth(SQUAD_HUD_DEPTH);
-      actor.squadHealthBack = this.add.rectangle(rowX + 40, rowY + 24, squadHealthBarWidth, 6, 0x0a0b0a, 0.58)
-        .setOrigin(0, 0.5)
-        .setStrokeStyle(1, actor.color, 0.65)
-        .setDepth(SQUAD_HUD_DEPTH);
-      actor.squadHealthBar = this.add.rectangle(
-        rowX + 42,
-        rowY + 24,
-        squadHealthBarWidth - 4,
-        2,
-        actor.color,
-        0.92,
-      )
-        .setOrigin(0, 0.5)
-        .setDepth(SQUAD_HUD_DEPTH);
-      actor.squadEliminations = this.add.text(
-        rowX + 40,
-        rowY + 29,
-        'ELIMS 00000',
-        {
-          ...labelStyle,
-          fontFamily: '"Share Tech Mono", monospace',
-          fontSize: '13px',
-          color: '#f2e6d0',
-          stroke: '#070807',
-          strokeThickness: 2,
-        },
-      ).setResolution(SQUAD_TEXT_RESOLUTION).setDepth(SQUAD_HUD_DEPTH);
-      actor.squadName?.setVisible(false);
-      actor.squadHealthText?.setVisible(false);
-      actor.squadHealthBack?.setVisible(false);
-      actor.squadHealthBar?.setVisible(false);
-      actor.squadEliminations?.setVisible(false);
       this.updateSquadHud(actor);
 
       actor.ring = this.add.circle(actor.sprite.x, actor.sprite.y, 19, actor.color, 0.035)

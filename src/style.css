@@ -1007,6 +1007,29 @@ button { border-radius: 0; }
   -webkit-font-smoothing: none;
 }
 
+.squad-hud-portrait-frame {
+  position: absolute;
+  top: 3px;
+  left: -42px;
+  width: 39px;
+  height: 39px;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--squad-color);
+  outline: 1px solid #070807;
+  background: #070807;
+}
+
+.squad-hud-portrait {
+  display: block;
+  width: 37px;
+  height: 37px;
+  image-rendering: pixelated;
+  object-fit: contain;
+}
+
 .squad-hud-name,
 .squad-hud-health,
 .squad-hud-elims {
