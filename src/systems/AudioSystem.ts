@@ -49,21 +49,24 @@ export class AudioSystem {
   private destroyed = false;
   private readonly onCue?: (cue: MusicCue) => void;
   private readonly onSound?: (sound: DuoSoundEffect) => void;
+  private readonly networkControlled: boolean;
 
   constructor(
     private readonly scene: Phaser.Scene,
     options: {
       onCue?: (cue: MusicCue) => void;
       onSound?: (sound: DuoSoundEffect) => void;
+      networkControlled?: boolean;
     } = {},
   ) {
     this.onCue = options.onCue;
     this.onSound = options.onSound;
+    this.networkControlled = options.networkControlled === true;
     scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.destroy());
   }
 
   startMusic(): void {
-    if (this.destroyed) return;
+    if (this.destroyed || this.networkControlled) return;
     const boss = this.activeBossEncounter();
     if (boss) this.transitionTo(BOSS_MUSIC_KEYS[boss.kind], true);
     else this.playNextMusicTrack();
@@ -79,6 +82,7 @@ export class AudioSystem {
   }
 
   beginBossTheme(kind: BossMusicKind): number {
+    if (this.networkControlled) return 0;
     const encounterId = ++this.bossSequence;
     this.bossEncounters.set(encounterId, { kind, sequence: encounterId });
     const active = this.activeBossEncounter();
@@ -87,6 +91,7 @@ export class AudioSystem {
   }
 
   endBossTheme(encounterId: number | undefined): void {
+    if (this.networkControlled) return;
     if (encounterId === undefined || !this.bossEncounters.delete(encounterId)) return;
     const active = this.activeBossEncounter();
     if (active) this.transitionTo(BOSS_MUSIC_KEYS[active.kind], true);
@@ -107,7 +112,7 @@ export class AudioSystem {
   }
 
   beginDefeatTheme(): void {
-    if (this.destroyed) return;
+    if (this.destroyed || this.networkControlled) return;
     this.bossEncounters.clear();
     this.transitionTo(Phaser.Math.RND.pick(DEFEAT_MUSIC_KEYS), true);
   }
@@ -145,7 +150,7 @@ export class AudioSystem {
   }
 
   private playNextMusicTrack(resumeInProgress = false): void {
-    if (this.destroyed || this.bossEncounters.size > 0) return;
+    if (this.destroyed || this.networkControlled || this.bossEncounters.size > 0) return;
     const choices = MUSIC_KEYS.filter((key) => key !== this.lastMusicKey);
     const key = Phaser.Math.RND.pick(choices.length > 0 ? choices : MUSIC_KEYS);
     this.lastMusicKey = key;
@@ -174,7 +179,7 @@ export class AudioSystem {
       this.music = undefined;
       this.musicKey = undefined;
       this.releaseMusicTrack(track);
-      this.playNextMusicTrack();
+      if (!this.networkControlled) this.playNextMusicTrack();
     });
     this.playTrack(track, seek);
     if (!previous) return;

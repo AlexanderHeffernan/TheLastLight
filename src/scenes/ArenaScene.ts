@@ -474,6 +474,7 @@ export class ArenaScene extends Phaser.Scene {
     });
     if (!this.isNetworkClient) window.dispatchEvent(new CustomEvent('last-light:run-start'));
     this.audio = new AudioSystem(this, {
+      networkControlled: this.isNetworkClient,
       onCue: (cue) => this.emitDuoEvent('music-cue', { ...cue }),
       onSound: (sound) => this.emitDuoEvent('sound-effect', { ...sound }),
     });
@@ -529,7 +530,6 @@ export class ArenaScene extends Phaser.Scene {
     if (this.isNetworkClient) {
       this.attachNetworkClient();
       this.duoOptions?.session.sendReady();
-      this.audio.startMusic();
       this.cameras.main.fadeIn(350, 4, 7, 6);
       window.dispatchEvent(new CustomEvent('last-light:game-ready'));
       return;
@@ -763,6 +763,7 @@ export class ArenaScene extends Phaser.Scene {
   private setNetworkPaused(paused: boolean): void {
     if (!this.isNetworkClient) return;
     this.networkPaused = paused;
+    this.audio.setPaused(paused);
     this.pauseMenu?.setVisible(paused);
     this.crosshair?.setVisible(!paused);
     if (paused) {
