@@ -597,7 +597,7 @@ export class ArenaScene extends Phaser.Scene {
         this.supplies.addPlayer(guest.sprite);
       }
     }
-    this.audio.startMusic();
+    if (!this.isDuo) this.audio.startMusic();
     this.director = new WaveDirector(this, {
       spawnZombie: (edge) => this.spawnZombie(edge),
       spawnBoss: (kind, edge) => this.telegraphBoss(kind, edge),
@@ -774,6 +774,7 @@ export class ArenaScene extends Phaser.Scene {
   private beginDuoSimulation(): void {
     if (!this.isDuo || this.isNetworkClient || this.isGameOver || !this.waitingForPartner) return;
     this.waitingForPartner = false;
+    this.audio.startMusic();
     this.director.start();
     this.waveText?.setText('THREAT 01');
     this.announce('HOLD THE OUTPOST', 'WASD TO MOVE • MOUSE TO AIM AND FIRE');

@@ -98,6 +98,7 @@ export class DuoSession {
   private inputChannel?: RTCDataChannel;
   private eventsChannel?: RTCDataChannel;
   private pendingEvents: DuoEvent[] = [];
+  private pendingIncomingEvents: DuoEvent[] = [];
   private reconnectTimer?: number;
   private reconnecting = false;
   private offerPoll?: number;
@@ -214,6 +215,10 @@ export class DuoSession {
     >,
   ): void {
     this.runtimeCallbacks = { ...callbacks };
+    if (callbacks.event && this.pendingIncomingEvents.length > 0) {
+      const pending = this.pendingIncomingEvents.splice(0);
+      pending.forEach((event) => callbacks.event?.(event));
+    }
     if (this.peerReady) callbacks.ready?.();
     if (this.remotePaused) callbacks.paused?.(true);
   }
@@ -701,7 +706,13 @@ export class DuoSession {
       return;
     }
     if (message.type !== 'event' || !message.event) return;
-    this.runtimeCallbacks.event?.(message.event as DuoEvent);
+    const event = message.event as DuoEvent;
+    if (this.runtimeCallbacks.event) {
+      this.runtimeCallbacks.event(event);
+      return;
+    }
+    this.pendingIncomingEvents.push(event);
+    if (this.pendingIncomingEvents.length > 128) this.pendingIncomingEvents.shift();
   }
 
   private handleMessage(raw: unknown): void {

@@ -3,7 +3,6 @@ import { BOSS_MUSIC_KEYS, DEFEAT_MUSIC_KEYS, MUSIC_KEYS, MUSIC_URLS } from '../a
 import type { DuoOscillatorType, DuoPlayerId, DuoSoundEffect } from '../network/protocol';
 
 const MUSIC_VOLUME = 0.16;
-const MUSIC_CROSSFADE_MS = 1100;
 
 type BossMusicKind = keyof typeof BOSS_MUSIC_KEYS;
 type MusicTrack = HTMLAudioElement;
@@ -163,10 +162,11 @@ export class AudioSystem {
     if (!url) return;
 
     const previous = this.music;
+    if (previous) this.releaseMusicTrack(previous);
     const track = new Audio();
     track.preload = 'auto';
     track.loop = loop;
-    track.volume = previous && !this.musicPaused ? 0 : MUSIC_VOLUME;
+    track.volume = MUSIC_VOLUME;
     track.setAttribute('playsinline', '');
     track.setAttribute('aria-hidden', 'true');
     track.src = url;
@@ -182,31 +182,6 @@ export class AudioSystem {
       if (!this.networkControlled) this.playNextMusicTrack();
     });
     this.playTrack(track, seek);
-    if (!previous) return;
-
-    if (this.musicPaused) {
-      this.releaseMusicTrack(previous);
-      return;
-    }
-
-    this.scene.tweens.killTweensOf(previous);
-    this.scene.tweens.killTweensOf(track);
-    this.scene.tweens.add({
-      targets: track,
-      volume: MUSIC_VOLUME,
-      duration: MUSIC_CROSSFADE_MS,
-      ease: 'Sine.easeInOut',
-    });
-    this.scene.tweens.add({
-      targets: previous,
-      volume: 0,
-      duration: MUSIC_CROSSFADE_MS,
-      ease: 'Sine.easeInOut',
-      onComplete: () => {
-        if (this.music === previous) return;
-        this.releaseMusicTrack(previous);
-      },
-    });
   }
 
   private playTrack(track: MusicTrack, seek = 0): void {

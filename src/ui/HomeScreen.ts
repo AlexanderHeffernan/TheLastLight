@@ -50,7 +50,6 @@ export class HomeScreen {
   private readonly skinModal = element<HTMLElement>('skin-modal');
   private readonly duoContent = element<HTMLElement>('duo-content');
   private menuMusic?: HTMLAudioElement;
-  private menuFadeFrame?: number;
   private menuUnlockHandler?: (event: Event) => void;
   private deploying = false;
   private callsignCheckTimer?: number;
@@ -1086,35 +1085,11 @@ export class HomeScreen {
   }
 
   private fadeOutMenuMusic(): void {
-    this.removeMenuUnlockHandler();
-    const audio = this.menuMusic;
-    if (!audio) return;
-    if (this.menuFadeFrame !== undefined) cancelAnimationFrame(this.menuFadeFrame);
-    const startedAt = performance.now();
-    const startingVolume = audio.volume;
-    const fade = (time: number) => {
-      const progress = Math.min(1, (time - startedAt) / 800);
-      audio.volume = startingVolume * (1 - progress);
-      if (progress < 1) {
-        this.menuFadeFrame = requestAnimationFrame(fade);
-        return;
-      }
-      audio.pause();
-      audio.currentTime = 0;
-      audio.removeAttribute('src');
-      audio.load();
-      if (this.menuMusic === audio) this.menuMusic = undefined;
-      this.menuFadeFrame = undefined;
-    };
-    this.menuFadeFrame = requestAnimationFrame(fade);
+    this.stopMenuMusic();
   }
 
   private stopMenuMusic(): void {
     this.removeMenuUnlockHandler();
-    if (this.menuFadeFrame !== undefined) {
-      cancelAnimationFrame(this.menuFadeFrame);
-      this.menuFadeFrame = undefined;
-    }
     this.menuMusic?.pause();
     this.menuMusic?.removeAttribute('src');
     this.menuMusic?.load();
