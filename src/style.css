@@ -982,6 +982,82 @@ button { border-radius: 0; }
 .game-shell:not(.browser-cursor-visible) #game canvas { cursor: none !important; }
 .game-shell.browser-cursor-visible #game canvas { cursor: default; }
 
+.squad-hud {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 0;
+  width: 960px;
+  height: 540px;
+  overflow: visible;
+  pointer-events: none;
+  transform-origin: top left;
+}
+
+.squad-hud-row {
+  --squad-color: #b9d0a9;
+  --squad-fill-color: var(--squad-color);
+  position: absolute;
+  left: 56px;
+  width: 115px;
+  height: 41px;
+  color: var(--squad-color);
+  font-family: "Share Tech Mono", monospace;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: none;
+}
+
+.squad-hud-name,
+.squad-hud-health,
+.squad-hud-elims {
+  position: absolute;
+  display: block;
+  white-space: nowrap;
+  text-shadow: -1px -1px 0 #070807, 1px -1px 0 #070807, -1px 1px 0 #070807, 1px 1px 0 #070807;
+}
+
+.squad-hud-name,
+.squad-hud-health {
+  top: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.squad-hud-name { left: 0; }
+.squad-hud-health { right: 0; }
+
+.squad-hud-bar-back {
+  position: absolute;
+  top: 21px;
+  left: 0;
+  width: 115px;
+  height: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--squad-color);
+  background: rgb(10 11 10 / 0.7);
+}
+
+.squad-hud-bar {
+  position: absolute;
+  top: 1px;
+  left: 2px;
+  width: calc(100% - 4px);
+  height: 2px;
+  background: var(--squad-fill-color);
+  transform-origin: left center;
+}
+
+.squad-hud-elims {
+  top: 29px;
+  left: 0;
+  color: #f2e6d0;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1;
+  font-synthesis: none;
+}
+
 .mobile-controls { display: none; }
 .mobile-controls[hidden] { display: none !important; }
 
@@ -1094,11 +1170,11 @@ button { border-radius: 0; }
 }
 .scanlines {
   inset: 0;
-  opacity: 0.055;
+  opacity: 0.012;
   background: repeating-linear-gradient(to bottom, transparent 0, transparent 2px, #000 3px, #000 4px);
   mix-blend-mode: multiply;
 }
-.vignette { inset: -1px; background: radial-gradient(ellipse at center, transparent 45%, rgb(0 0 0 / 0.72) 100%); }
+.vignette { inset: -1px; background: radial-gradient(ellipse at center, transparent 55%, rgb(0 0 0 / 0.08) 100%); }
 
 .orientation-notice { display: none; }
 

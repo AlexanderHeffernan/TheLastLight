@@ -103,6 +103,15 @@ interface BossHazard {
   radiusY: number;
 }
 
+interface SquadHudDom {
+  row: HTMLDivElement;
+  name: HTMLSpanElement;
+  health: HTMLSpanElement;
+  healthBack: HTMLDivElement;
+  healthBar: HTMLDivElement;
+  eliminations: HTMLSpanElement;
+}
+
 interface PlayerActor {
   id: DuoPlayerId;
   callsign: string;
@@ -122,6 +131,7 @@ interface PlayerActor {
   squadHealthBack?: Phaser.GameObjects.Rectangle;
   squadHealthBar?: Phaser.GameObjects.Rectangle;
   squadEliminations?: Phaser.GameObjects.Text;
+  squadDom?: SquadHudDom;
   health: number;
   alive: boolean;
   eliminations: number;
@@ -149,6 +159,9 @@ interface HudPreview {
   hostAlive: boolean;
   guestAlive: boolean;
 }
+
+const SQUAD_TEXT_RESOLUTION = 3;
+const SQUAD_HUD_DEPTH = 100;
 const SNAPSHOT_RENDER_DELAY_MS = 100;
 const SNAPSHOT_INTERVAL_MS = 50;
 const BOSS_DEFINITIONS: Record<BossKind, BossDefinition> = {
@@ -290,6 +303,8 @@ export class ArenaScene extends Phaser.Scene {
   private waitingForPartner = false;
   private networkPaused = false;
   private networkWave = 1;
+  private squadHudElement?: HTMLElement;
+  private squadHudResizeHandler?: () => void;
 
   private readonly handleMobileControl = (event: Event): void => {
     const detail = (event as CustomEvent<{
@@ -489,6 +504,9 @@ export class ArenaScene extends Phaser.Scene {
       if (this.networkConnectionHandler) window.removeEventListener('last-light:duo-connection', this.networkConnectionHandler);
       if (this.networkGameOverHandler) window.removeEventListener('last-light:duo-game-over', this.networkGameOverHandler);
       if (this.networkLeaderboardHandler) window.removeEventListener('last-light:duo-leaderboard-result', this.networkLeaderboardHandler);
+      if (this.squadHudResizeHandler) window.removeEventListener('resize', this.squadHudResizeHandler);
+      this.squadHudResizeHandler = undefined;
+      this.squadHudElement?.replaceChildren();
       this.leaderboardResultText = undefined;
     });
     if (!this.isNetworkClient) window.dispatchEvent(new CustomEvent('last-light:run-start'));
@@ -977,22 +995,39 @@ export class ArenaScene extends Phaser.Scene {
   private updateSquadHud(actor: PlayerActor): void {
     const healthRatio = Phaser.Math.Clamp(actor.health / 100, 0, 1);
     const down = !actor.alive || actor.health <= 0;
-    const color = Phaser.Display.Color.IntegerToColor(actor.color).rgba;
+    const textColor = Phaser.Display.Color.IntegerToColor(actor.color).brighten(70).rgba;
     const displayName = actor.id === this.localPlayerId
       ? 'YOU'
       : this.formatSquadName(actor.callsign);
 
     if (down) actor.squadPortrait?.setTint(0x665653).setAlpha(0.58);
     else actor.squadPortrait?.clearTint().setAlpha(1);
-    actor.squadName?.setText(displayName).setColor(down ? '#9a7d76' : color);
+    actor.squadName?.setText(displayName).setColor(down ? '#9a7d76' : textColor);
     actor.squadHealthText?.setText(`${Math.round(healthRatio * 100)}%`)
-      .setColor(down ? '#c46b5e' : color);
+      .setColor(down ? '#c46b5e' : textColor);
     actor.squadHealthBack?.setStrokeStyle(1, actor.color, down ? 0.32 : 0.65);
     actor.squadHealthBar
       ?.setScale(healthRatio, 1)
       .setFillStyle(actor.health <= 35 ? 0xd4513f : actor.color, down ? 0.32 : 0.92);
     actor.squadEliminations?.setText(`ELIMS ${String(actor.eliminations).padStart(5, '0')}`)
-      .setColor(down ? '#9a7d76' : '#9c978d');
+      .setColor(down ? '#9a7d76' : '#f2e6d0');
+
+    const squadDom = actor.squadDom;
+    if (!squadDom) return;
+    const playerColor = `#${actor.color.toString(16).padStart(6, '0')}`;
+    const fillColor = actor.health <= 35 ? '#d4513f' : playerColor;
+    const displayColor = down ? '#c46b5e' : textColor;
+    squadDom.row.style.setProperty('--squad-color', playerColor);
+    squadDom.row.style.setProperty('--squad-fill-color', fillColor);
+    squadDom.name.textContent = displayName;
+    squadDom.name.style.color = down ? '#9a7d76' : displayColor;
+    squadDom.health.textContent = `${Math.round(healthRatio * 100)}%`;
+    squadDom.health.style.color = displayColor;
+    squadDom.healthBack.style.opacity = down ? '0.32' : '0.65';
+    squadDom.healthBar.style.transform = `scaleX(${healthRatio})`;
+    squadDom.healthBar.style.opacity = down ? '0.32' : '0.92';
+    squadDom.eliminations.textContent = `ELIMS ${String(actor.eliminations).padStart(5, '0')}`;
+    squadDom.eliminations.style.color = down ? '#9a7d76' : '#f2e6d0';
   }
 
   private formatSquadName(callsign: string): string {
@@ -2656,7 +2691,56 @@ export class ArenaScene extends Phaser.Scene {
     this.lighting.redraw(this.player.x, this.player.y, Math.PI / 2);
   }
 
+  private setupSquadHud(): void {
+    const element = document.querySelector<HTMLElement>('#squad-hud');
+    if (!element) return;
+    this.squadHudElement = element;
+    element.replaceChildren();
+    this.squadHudResizeHandler = () => this.syncSquadHudLayout();
+    window.addEventListener('resize', this.squadHudResizeHandler);
+    this.syncSquadHudLayout();
+  }
+
+  private syncSquadHudLayout(): void {
+    const hud = this.squadHudElement;
+    const canvas = document.querySelector<HTMLCanvasElement>('#game canvas');
+    const shell = document.querySelector<HTMLElement>('#game-shell');
+    if (!hud || !canvas || !shell) return;
+    const canvasRect = canvas.getBoundingClientRect();
+    const shellRect = shell.getBoundingClientRect();
+    if (canvasRect.width <= 0 || canvasRect.height <= 0) return;
+    hud.style.left = `${canvasRect.left - shellRect.left}px`;
+    hud.style.top = `${canvasRect.top - shellRect.top}px`;
+    hud.style.transform = `scale(${canvasRect.width / WIDTH}, ${canvasRect.height / HEIGHT})`;
+  }
+
+  private createSquadHudRow(actor: PlayerActor, index: number): SquadHudDom | undefined {
+    if (!this.squadHudElement) return undefined;
+    const row = document.createElement('div');
+    row.className = 'squad-hud-row';
+    row.dataset.player = actor.id;
+    row.style.top = `${16 + index * 45}px`;
+    row.style.setProperty('--squad-color', `#${actor.color.toString(16).padStart(6, '0')}`);
+
+    const name = document.createElement('span');
+    name.className = 'squad-hud-name';
+    const health = document.createElement('span');
+    health.className = 'squad-hud-health';
+    const healthBack = document.createElement('div');
+    healthBack.className = 'squad-hud-bar-back';
+    const healthBar = document.createElement('div');
+    healthBar.className = 'squad-hud-bar';
+    const eliminations = document.createElement('span');
+    eliminations.className = 'squad-hud-elims';
+
+    healthBack.append(healthBar);
+    row.append(name, health, healthBack, eliminations);
+    this.squadHudElement.append(row);
+    return { row, name, health, healthBack, healthBar, eliminations };
+  }
+
   makeInterface() {
+    this.setupSquadHud();
     const labelStyle = {
       fontFamily: '"Share Tech Mono", monospace',
       fontSize: '13px',
@@ -2672,28 +2756,35 @@ export class ArenaScene extends Phaser.Scene {
       const color = Phaser.Display.Color.IntegerToColor(actor.color).rgba;
       const rowX = squadX;
       const rowY = squadTop + index * (squadRowHeight + squadGap);
+      actor.squadDom = this.createSquadHudRow(actor, index);
       actor.squadPortrait = this.add.image(rowX + 20, rowY + 20.5, actor.sprite.texture.key)
         .setDisplaySize(30, 30)
-        .setDepth(32);
+        .setDepth(SQUAD_HUD_DEPTH);
       actor.squadName = this.add.text(
         rowX + 40,
         rowY + 4,
         actor.id === this.localPlayerId ? 'YOU' : this.formatSquadName(actor.callsign),
         {
         ...labelStyle,
-        fontSize: '11px',
+        fontSize: '12px',
+        fontStyle: 'bold',
         color,
+        stroke: '#070807',
+        strokeThickness: 2,
         },
-      ).setDepth(32);
+      ).setResolution(SQUAD_TEXT_RESOLUTION).setDepth(SQUAD_HUD_DEPTH);
       actor.squadHealthText = this.add.text(rowX + 40 + squadHealthBarWidth, rowY + 4, '100%', {
         ...labelStyle,
-        fontSize: '10px',
+        fontSize: '11px',
+        fontStyle: 'bold',
         color,
-      }).setOrigin(1, 0).setDepth(32);
+        stroke: '#070807',
+        strokeThickness: 2,
+      }).setResolution(SQUAD_TEXT_RESOLUTION).setOrigin(1, 0).setDepth(SQUAD_HUD_DEPTH);
       actor.squadHealthBack = this.add.rectangle(rowX + 40, rowY + 24, squadHealthBarWidth, 6, 0x0a0b0a, 0.58)
         .setOrigin(0, 0.5)
         .setStrokeStyle(1, actor.color, 0.65)
-        .setDepth(31);
+        .setDepth(SQUAD_HUD_DEPTH);
       actor.squadHealthBar = this.add.rectangle(
         rowX + 42,
         rowY + 24,
@@ -2703,17 +2794,25 @@ export class ArenaScene extends Phaser.Scene {
         0.92,
       )
         .setOrigin(0, 0.5)
-        .setDepth(32);
+        .setDepth(SQUAD_HUD_DEPTH);
       actor.squadEliminations = this.add.text(
         rowX + 40,
-        rowY + 30,
+        rowY + 29,
         'ELIMS 00000',
         {
           ...labelStyle,
-          fontSize: '8px',
-          color: '#9c978d',
+          fontFamily: '"Share Tech Mono", monospace',
+          fontSize: '13px',
+          color: '#f2e6d0',
+          stroke: '#070807',
+          strokeThickness: 2,
         },
-      ).setDepth(32);
+      ).setResolution(SQUAD_TEXT_RESOLUTION).setDepth(SQUAD_HUD_DEPTH);
+      actor.squadName?.setVisible(false);
+      actor.squadHealthText?.setVisible(false);
+      actor.squadHealthBack?.setVisible(false);
+      actor.squadHealthBar?.setVisible(false);
+      actor.squadEliminations?.setVisible(false);
       this.updateSquadHud(actor);
 
       actor.ring = this.add.circle(actor.sprite.x, actor.sprite.y, 19, actor.color, 0.035)
