@@ -949,9 +949,12 @@ button { border-radius: 0; }
   display: grid;
   place-items: center;
   isolation: isolate;
+  cursor: none;
   background: radial-gradient(circle at 50% 45%, #1b211d 0%, #080b0a 65%);
   overflow: hidden;
 }
+
+.game-shell.browser-cursor-visible { cursor: default; }
 
 #game,
 #game canvas { display: block; }
@@ -969,12 +972,15 @@ button { border-radius: 0; }
 #game canvas {
   max-width: 100%;
   max-height: 100%;
-  cursor: default;
+  cursor: none;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   box-shadow: 0 0 0 1px #394039, 0 25px 80px #000;
   touch-action: none;
 }
+
+.game-shell:not(.browser-cursor-visible) #game canvas { cursor: none !important; }
+.game-shell.browser-cursor-visible #game canvas { cursor: default; }
 
 .mobile-controls { display: none; }
 .mobile-controls[hidden] { display: none !important; }
@@ -1078,12 +1084,6 @@ button { border-radius: 0; }
     height: clamp(38px, 9vh, 50px);
   }
   .mobile-action:disabled { opacity: 0.3; }
-}
-
-@media (hover: hover) and (pointer: fine) {
-  html:not(.touch-controls-available) #game canvas {
-    cursor: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAGKADAAQAAAABAAAAGAAAAADiNXWtAAAA6klEQVRIDWNgGOqAEeaBu5dW/YexkWllvTC4GmRxGBuk787tmwwqquoMC/yqYcIMzQ9ug/UxwUTSs5thTJJpkOEgcFyWA0Mv3HUgl8yfupzhzetXDCKiYmCFIPaMdUfhajB0AwVq0gPBPkfWl5gdyQDzOQu6JkIGoqtvmbkexQEwC2Hq4EEEE6A2TXMLqO3gkW7eSm29/yBMSjiQFMlXvn4nxexRtSSGAKgsQs/mJBoBVg4yA7lkJimSybGQ5hZglKbIwURKcQ3yHUg9OkCxAFSOI4PuhonIXKxsdD3oivAGUWlDPrr6EcgHAInPTfAKzQGUAAAAAElFTkSuQmCC") 12 12, crosshair;
-  }
 }
 
 .scanlines,

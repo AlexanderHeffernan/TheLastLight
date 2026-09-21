@@ -451,6 +451,7 @@ export class ArenaScene extends Phaser.Scene {
     this.waitingForPartner = this.isDuo && !this.hudPreview;
     this.networkPaused = false;
     this.networkWave = 1;
+    this.setBrowserCursorVisible(false);
     window.addEventListener('last-light:leaderboard-result', this.handleLeaderboardResult);
     this.networkDisconnectHandler = (event) => {
       const reason = String((event as CustomEvent<{ reason?: string }>).detail?.reason ?? 'MULTIPLAYER LINK LOST');
@@ -751,6 +752,11 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  private setBrowserCursorVisible(visible: boolean): void {
+    document.querySelector<HTMLElement>('#game-shell')
+      ?.classList.toggle('browser-cursor-visible', visible);
+  }
+
   private handleNetworkConnection(state: 'connected' | 'reconnecting' | 'failed'): void {
     if (!this.isDuo || this.isGameOver) return;
     if (state === 'reconnecting') {
@@ -760,12 +766,14 @@ export class ArenaScene extends Phaser.Scene {
       this.pauseTitleText?.setText('RECONNECTING');
       this.pauseStatusText?.setText('PRIVATE LINK // RESTORING SIGNAL');
       this.crosshair?.setVisible(false);
+      this.setBrowserCursorVisible(true);
       this.playerActors.forEach((actor) => actor.sprite.setVelocity(0));
     } else if (state === 'connected' && this.networkPausedByConnection) {
       this.networkPausedByConnection = false;
       this.networkPaused = false;
       if (!this.isPaused) this.pauseMenu?.setVisible(false);
       this.crosshair?.setVisible(!this.isPaused);
+      this.setBrowserCursorVisible(this.isPaused);
     } else if (state === 'failed') {
       this.handleNetworkDisconnect('CONNECTION LOST // THE MULTIPLAYER CONNECTION FAILED');
     }
@@ -786,6 +794,7 @@ export class ArenaScene extends Phaser.Scene {
     this.audio.setPaused(paused);
     this.pauseMenu?.setVisible(paused);
     this.crosshair?.setVisible(!paused);
+    this.setBrowserCursorVisible(paused);
     if (paused) {
       this.pauseStatusText?.setText('HOST CONTROL // FIELD OPERATIONS SUSPENDED');
       this.pauseTitleText?.setText('PAUSED');
@@ -3058,6 +3067,7 @@ export class ArenaScene extends Phaser.Scene {
     this.isPaused = !this.isPaused;
     this.pauseMenu.setVisible(this.isPaused);
     this.crosshair.setVisible(!this.isPaused && !this.touchEnabled);
+    this.setBrowserCursorVisible(this.isPaused);
     if (this.isDuo) this.duoOptions?.session.sendPause(this.isPaused);
     this.aimLaser.setVisible(!this.isPaused && this.touchEnabled);
     window.dispatchEvent(new CustomEvent('last-light:mobile-visibility', {
@@ -5453,6 +5463,7 @@ export class ArenaScene extends Phaser.Scene {
   gameOver(message?: string, scoreOverride?: number) {
     if (this.isGameOver) return;
     this.isGameOver = true;
+    this.setBrowserCursorVisible(true);
     this.crosshair.setVisible(false);
     this.aimLaser.setVisible(false);
     if (this.touchEnabled) {
