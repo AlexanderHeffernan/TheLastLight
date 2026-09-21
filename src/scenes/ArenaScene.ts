@@ -116,8 +116,15 @@ interface PlayerActor {
   youLabel?: Phaser.GameObjects.Text;
   healthBack?: Phaser.GameObjects.Rectangle;
   healthBar?: Phaser.GameObjects.Rectangle;
+  squadPortrait?: Phaser.GameObjects.Image;
+  squadName?: Phaser.GameObjects.Text;
+  squadHealthText?: Phaser.GameObjects.Text;
+  squadHealthBack?: Phaser.GameObjects.Rectangle;
+  squadHealthBar?: Phaser.GameObjects.Rectangle;
+  squadEliminations?: Phaser.GameObjects.Text;
   health: number;
   alive: boolean;
+  eliminations: number;
   aim: number;
   flareCharges: number;
   knockbackUntil: number;
@@ -134,6 +141,14 @@ interface PlayerActor {
 // This is only a browser-safety failsafe. Normal gameplay should not stop
 // spawning because the arena is crowded; players are expected to keep killing.
 const EMERGENCY_ACTIVE_ZOMBIE_LIMIT = 240;
+
+interface HudPreview {
+  duo: boolean;
+  hostHealth: number;
+  guestHealth: number;
+  hostAlive: boolean;
+  guestAlive: boolean;
+}
 const SNAPSHOT_RENDER_DELAY_MS = 100;
 const SNAPSHOT_INTERVAL_MS = 50;
 const BOSS_DEFINITIONS: Record<BossKind, BossDefinition> = {
@@ -205,7 +220,6 @@ export class ArenaScene extends Phaser.Scene {
   private playerGlow!: Phaser.GameObjects.Image;
   private tracers!: Phaser.GameObjects.Graphics;
 
-  private scoreText!: Phaser.GameObjects.Text;
   private healthBack!: Phaser.GameObjects.Rectangle;
   private healthBar!: Phaser.GameObjects.Rectangle;
   private waveText!: Phaser.GameObjects.Text;
@@ -223,11 +237,12 @@ export class ArenaScene extends Phaser.Scene {
   private leaderboardResultText?: Phaser.GameObjects.Text;
   private wasAdrenalineActive = false;
   private readonly launchOptions = getGameLaunchOptions();
+  private readonly hudPreview = readHudPreview();
   private readonly duoOptions: DuoLaunchOptions | undefined = this.launchOptions.mode === 'duos'
     ? this.launchOptions
     : undefined;
   private readonly isNetworkClient = this.launchOptions.mode === 'duos' && this.launchOptions.role === 'guest';
-  private readonly isDuo = this.launchOptions.mode === 'duos';
+  private readonly isDuo = this.launchOptions.mode === 'duos' || this.hudPreview?.duo === true;
   private readonly localPlayerId: DuoPlayerId = this.launchOptions.mode === 'duos'
     ? this.launchOptions.playerId
     : 'host';
@@ -433,7 +448,7 @@ export class ArenaScene extends Phaser.Scene {
     this.networkFlareCartridgeGlow = undefined;
     this.networkEventSequence = 0;
     this.networkPausedByConnection = false;
-    this.waitingForPartner = this.isDuo;
+    this.waitingForPartner = this.isDuo && !this.hudPreview;
     this.networkPaused = false;
     this.networkWave = 1;
     window.addEventListener('last-light:leaderboard-result', this.handleLeaderboardResult);
@@ -450,9 +465,10 @@ export class ArenaScene extends Phaser.Scene {
       if (state) this.handleNetworkConnection(state);
     };
     this.networkGameOverHandler = (event) => {
-      const message = String((event as CustomEvent<{ message?: string }>).detail?.message
+      const detail = (event as CustomEvent<{ message?: string; score?: number }>).detail;
+      const message = String(detail?.message
         ?? 'OPERATION ENDED // BOTH SURVIVORS DOWN');
-      this.gameOver(message);
+      this.gameOver(message, detail?.score);
     };
     this.networkLeaderboardHandler = (event) => {
       const detail = (event as CustomEvent<{ rank: number | null; newRecord: boolean; available: boolean }>).detail;
@@ -523,6 +539,7 @@ export class ArenaScene extends Phaser.Scene {
     this.makeEnvironment();
     this.makeLightingAndAmbience();
     this.makeInterface();
+    this.applyHudPreview();
     this.bindControls();
     this.playerActors.forEach((actor) => {
       this.physics.add.collider(actor.sprite, this.solidProps);
@@ -589,7 +606,7 @@ export class ArenaScene extends Phaser.Scene {
       startPowerFailure: (wave) => this.startOutpostPowerFailure(wave),
       isGameOver: () => this.isGameOver,
     });
-    if (!this.isDuo) this.director.start();
+    if (!this.isDuo || this.hudPreview) this.director.start();
 
     this.attachNetworkHost();
 
@@ -935,6 +952,38 @@ export class ArenaScene extends Phaser.Scene {
       .setFillStyle(actor.health <= 35 ? 0xd4513f : actor.color, actor.alive ? 0.9 : 0.35);
     actor.sprite.setAlpha(actor.alive ? 1 : 0.44);
     if (!actor.alive) actor.sprite.setTint(0x6f5550);
+    this.updateSquadHud(actor);
+  }
+
+  private updateSquadHud(actor: PlayerActor): void {
+    const healthRatio = Phaser.Math.Clamp(actor.health / 100, 0, 1);
+    const down = !actor.alive || actor.health <= 0;
+    const color = Phaser.Display.Color.IntegerToColor(actor.color).rgba;
+    const displayName = actor.id === this.localPlayerId
+      ? 'YOU'
+      : this.formatSquadName(actor.callsign);
+
+    if (down) actor.squadPortrait?.setTint(0x665653).setAlpha(0.58);
+    else actor.squadPortrait?.clearTint().setAlpha(1);
+    actor.squadName?.setText(displayName).setColor(down ? '#9a7d76' : color);
+    actor.squadHealthText?.setText(`${Math.round(healthRatio * 100)}%`)
+      .setColor(down ? '#c46b5e' : color);
+    actor.squadHealthBack?.setStrokeStyle(1, actor.color, down ? 0.32 : 0.65);
+    actor.squadHealthBar
+      ?.setScale(healthRatio, 1)
+      .setFillStyle(actor.health <= 35 ? 0xd4513f : actor.color, down ? 0.32 : 0.92);
+    actor.squadEliminations?.setText(`ELIMS ${String(actor.eliminations).padStart(5, '0')}`)
+      .setColor(down ? '#9a7d76' : '#9c978d');
+  }
+
+  private formatSquadName(callsign: string): string {
+    const name = callsign.trim().toUpperCase();
+    return name.length > 11 ? `${name.slice(0, 10)}…` : name;
+  }
+
+  private totalEliminations(): number {
+    return [...this.playerActors.values()]
+      .reduce((total, actor) => total + actor.eliminations, 0);
   }
 
   private localDuoInput(time: number): DuoInput {
@@ -988,7 +1037,6 @@ export class ArenaScene extends Phaser.Scene {
     this.waveText.setText(this.waitingForPartner
       ? 'WAITING FOR HOST TO BEGIN...'
       : `THREAT ${String(this.networkWave ?? 1).padStart(2, '0')}`);
-    this.scoreText.setText(String(this.score).padStart(5, '0'));
     this.tracers.clear().lineStyle(2, 0xffd66f, 0.7);
     this.lighting.lowHealthShade.setAlpha(actor.health <= 35 && actor.alive
       ? 0.035 + Math.sin(time * 0.006) * 0.025
@@ -1118,6 +1166,7 @@ export class ArenaScene extends Phaser.Scene {
       rotation: actor.sprite.rotation,
       health: actor.health,
       alive: actor.alive,
+      eliminations: actor.eliminations,
       invulnerableUntil: actor.invulnerableUntil,
       flareCharges: this.flares?.chargeCount() ?? actor.flareCharges,
       adrenalineMs: this.supplies?.adrenalineRemaining(time, actor.sprite) ?? 0,
@@ -1168,7 +1217,7 @@ export class ArenaScene extends Phaser.Scene {
     return {
       tick: this.snapshotTick,
       elapsedMs: Math.max(0, Math.round(this.getSurvivalMs())),
-      score: this.score,
+      score: this.totalEliminations(),
       wave: this.director?.wave ?? 1,
       waitingForPartner: this.waitingForPartner,
       paused: this.isPaused,
@@ -1254,6 +1303,7 @@ export class ArenaScene extends Phaser.Scene {
       }
       actor.health = Phaser.Math.Clamp(player.health, 0, 100);
       actor.alive = player.alive && actor.health > 0;
+      actor.eliminations = player.eliminations ?? 0;
       actor.invulnerableUntil = player.invulnerableUntil;
       actor.flareCharges = player.flareCharges;
       actor.adrenalineUntil = this.time.now + Math.max(0, player.adrenalineMs ?? 0);
@@ -2111,12 +2161,16 @@ export class ArenaScene extends Phaser.Scene {
         host: this.duoOptions.role === 'host' ? this.duoOptions.callsign : this.duoOptions.partnerCallsign,
         guest: this.duoOptions.role === 'guest' ? this.duoOptions.callsign : this.duoOptions.partnerCallsign,
       }
+      : this.hudPreview
+        ? { host: this.launchOptions.callsign, guest: 'EMBER' }
       : { host: this.launchOptions.callsign, guest: '' };
     const skinIds: Record<DuoPlayerId, string> = this.duoOptions
       ? {
         host: this.duoOptions.role === 'host' ? this.duoOptions.skinId : this.duoOptions.partnerSkinId,
         guest: this.duoOptions.role === 'guest' ? this.duoOptions.skinId : this.duoOptions.partnerSkinId,
       }
+      : this.hudPreview
+        ? { host: this.launchOptions.skinId, guest: 'field_medic' }
       : { host: this.launchOptions.skinId, guest: '' };
     const ids: DuoPlayerId[] = this.isDuo ? ['host', 'guest'] : ['host'];
     ids.forEach((id) => {
@@ -2170,6 +2224,7 @@ export class ArenaScene extends Phaser.Scene {
       glow,
       health: 100,
       alive: true,
+      eliminations: 0,
       aim: -Math.PI / 2,
       flareCharges: 0,
       knockbackUntil: 0,
@@ -2182,6 +2237,24 @@ export class ArenaScene extends Phaser.Scene {
       lastFlare: false,
       lastInteract: false,
     };
+  }
+
+  private applyHudPreview(): void {
+    if (!this.hudPreview) return;
+    const previewById: Record<DuoPlayerId, { health: number; alive: boolean }> = {
+      host: { health: this.hudPreview.hostHealth, alive: this.hudPreview.hostAlive },
+      guest: { health: this.hudPreview.guestHealth, alive: this.hudPreview.guestAlive },
+    };
+    this.playerActors.forEach((actor) => {
+      const preview = previewById[actor.id];
+      actor.health = preview.health;
+      actor.alive = preview.alive && actor.health > 0;
+      if (actor.sprite.body) actor.sprite.body.enable = actor.alive;
+      if (actor.alive) actor.sprite.clearTint();
+      else actor.sprite.setTint(0x6f5550).setAlpha(0.44);
+      this.updateActorDisplay(actor);
+    });
+    this.health = this.actor(this.localPlayerId)?.health ?? this.health;
   }
 
   private applyActorSkin(actor: PlayerActor, skinId: string | undefined, callsign: string, fallbackColor?: number): void {
@@ -2197,6 +2270,11 @@ export class ArenaScene extends Phaser.Scene {
     actor.healthBack?.setStrokeStyle(1, skin.color, 0.65);
     actor.healthBar?.setFillStyle(actor.health <= 35 ? 0xd4513f : skin.color, actor.alive ? 0.9 : 0.35);
     actor.nameLabel?.setColor(Phaser.Display.Color.IntegerToColor(skin.color).rgba);
+    actor.squadPortrait?.setTexture(skin.textureKey);
+    actor.squadName?.setColor(Phaser.Display.Color.IntegerToColor(skin.color).rgba);
+    actor.squadHealthText?.setColor(Phaser.Display.Color.IntegerToColor(skin.color).rgba);
+    actor.squadHealthBack?.setStrokeStyle(1, skin.color, actor.alive ? 0.65 : 0.32);
+    actor.squadHealthBar?.setFillStyle(actor.health <= 35 ? 0xd4513f : skin.color, actor.alive ? 0.92 : 0.32);
     if (fallbackColor !== undefined && !skinId) actor.color = fallbackColor;
   }
 
@@ -2546,17 +2624,60 @@ export class ArenaScene extends Phaser.Scene {
       fontSize: '13px',
       color: '#ad8880',
     };
-    this.add.text(24, 20, 'ELIMINATIONS', labelStyle).setDepth(30);
-    this.scoreText = this.add.text(22, 31, '00000', {
-      fontFamily: '"Changa One", sans-serif',
-      fontSize: '34px',
-      color: '#f3e7c4',
-      stroke: '#0a0d0b',
-      strokeThickness: 5,
-    }).setDepth(30);
+    const squadX = 16;
+    const squadTop = 16;
+    const squadRowHeight = 41;
+    const squadGap = 4;
+    const squadHealthBarWidth = 115;
 
-    this.playerActors.forEach((actor) => {
+    [...this.playerActors.values()].forEach((actor, index) => {
       const color = Phaser.Display.Color.IntegerToColor(actor.color).rgba;
+      const rowX = squadX;
+      const rowY = squadTop + index * (squadRowHeight + squadGap);
+      actor.squadPortrait = this.add.image(rowX + 20, rowY + 20.5, actor.sprite.texture.key)
+        .setDisplaySize(30, 30)
+        .setDepth(32);
+      actor.squadName = this.add.text(
+        rowX + 40,
+        rowY + 4,
+        actor.id === this.localPlayerId ? 'YOU' : this.formatSquadName(actor.callsign),
+        {
+        ...labelStyle,
+        fontSize: '11px',
+        color,
+        },
+      ).setDepth(32);
+      actor.squadHealthText = this.add.text(rowX + 40 + squadHealthBarWidth, rowY + 4, '100%', {
+        ...labelStyle,
+        fontSize: '10px',
+        color,
+      }).setOrigin(1, 0).setDepth(32);
+      actor.squadHealthBack = this.add.rectangle(rowX + 40, rowY + 24, squadHealthBarWidth, 6, 0x0a0b0a, 0.58)
+        .setOrigin(0, 0.5)
+        .setStrokeStyle(1, actor.color, 0.65)
+        .setDepth(31);
+      actor.squadHealthBar = this.add.rectangle(
+        rowX + 42,
+        rowY + 24,
+        squadHealthBarWidth - 4,
+        2,
+        actor.color,
+        0.92,
+      )
+        .setOrigin(0, 0.5)
+        .setDepth(32);
+      actor.squadEliminations = this.add.text(
+        rowX + 40,
+        rowY + 30,
+        'ELIMS 00000',
+        {
+          ...labelStyle,
+          fontSize: '8px',
+          color: '#9c978d',
+        },
+      ).setDepth(32);
+      this.updateSquadHud(actor);
+
       actor.ring = this.add.circle(actor.sprite.x, actor.sprite.y, 19, actor.color, 0.035)
         .setStrokeStyle(2, actor.color, 0.82)
         .setDepth(2);
@@ -2818,7 +2939,7 @@ export class ArenaScene extends Phaser.Scene {
     if (!this.isGameOver && !this.isDuo) {
       window.dispatchEvent(new CustomEvent('last-light:game-over', {
         detail: {
-          score: this.score,
+          score: this.totalEliminations(),
           survivalMs: this.getSurvivalMs(),
           threat: this.director?.wave ?? this.networkWave,
           runId: this.runId,
@@ -4974,6 +5095,7 @@ export class ArenaScene extends Phaser.Scene {
   hitZombie(bullet, zombie) {
     if (!bullet.active || !zombie.active) return;
     const impactAngle = bullet.rotation;
+    const killerId = bullet.getData('ownerId') as DuoPlayerId | undefined;
     const bossKind = zombie.getData('bossKind') as BossKind | undefined;
     this.destroyBullet(bullet);
     const breakerArmored = bossKind === 'breaker' && zombie.getData('bossState') !== 'recovery';
@@ -5018,10 +5140,10 @@ export class ArenaScene extends Phaser.Scene {
       return;
     }
 
-    this.killZombie(zombie, impactAngle);
+    this.killZombie(zombie, impactAngle, killerId);
   }
 
-  killZombie(zombie, impactAngle) {
+  killZombie(zombie, impactAngle, killerId?: DuoPlayerId) {
     if (!zombie.active) return;
     const { x, y, rotation } = zombie;
     const type = zombie.getData('type');
@@ -5029,9 +5151,11 @@ export class ArenaScene extends Phaser.Scene {
     const baseScale = zombie.getData('baseScale');
     const voice = bossKind ? BOSS_DEFINITIONS[bossKind].voice : type as MonsterType;
     this.monsterAudio.play(voice, 'death', x, y, this.player.x, this.player.y);
-    this.score += 1;
-    this.scoreText.setText(String(this.score).padStart(5, '0'));
-    this.tweens.add({ targets: this.scoreText, scale: 1.16, duration: 55, yoyo: true });
+    if (killerId) {
+      const killer = this.actor(killerId);
+      if (killer) killer.eliminations += 1;
+    }
+    this.score = this.totalEliminations();
 
     const corpse = this.add.image(x, y, zombie.getData('textureKey'))
       .setDepth(-1)
@@ -5325,7 +5449,7 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
-  gameOver(message?: string) {
+  gameOver(message?: string, scoreOverride?: number) {
     if (this.isGameOver) return;
     this.isGameOver = true;
     this.crosshair.setVisible(false);
@@ -5336,10 +5460,14 @@ export class ArenaScene extends Phaser.Scene {
       }));
     }
     const survivalMs = this.getSurvivalMs();
+    const score = typeof scoreOverride === 'number' && Number.isInteger(scoreOverride) && scoreOverride >= 0
+      ? scoreOverride
+      : this.totalEliminations();
+    this.score = score;
     const disconnection = message?.startsWith('CONNECTION LOST') ?? false;
     window.dispatchEvent(new CustomEvent('last-light:game-over', {
       detail: {
-        score: this.score,
+        score,
         survivalMs,
         threat: this.director?.wave ?? this.networkWave,
         runId: this.runId,
@@ -5352,7 +5480,7 @@ export class ArenaScene extends Phaser.Scene {
     this.announcementQueue = [];
     this.director?.stop();
     if (this.isDuo && this.duoOptions?.role === 'host') {
-      this.duoOptions.session.sendGameOver(message ?? 'OPERATION ENDED // BOTH SURVIVORS DOWN');
+      this.duoOptions.session.sendGameOver(message ?? 'OPERATION ENDED // BOTH SURVIVORS DOWN', score);
     }
     this.audio.beginDefeatTheme();
     this.playerActors.forEach((actor) => actor.sprite.setTint(0x8f4d44).setVelocity(0));
@@ -5387,7 +5515,7 @@ export class ArenaScene extends Phaser.Scene {
     const result = this.add.text(
       WIDTH / 2,
       HEIGHT / 2 - 20,
-      disconnection ? 'DISCONNECTION KILLED THE SURVIVORS' : `${this.score} HOSTILES  •  SURVIVED ${survivalTime}`,
+      disconnection ? 'DISCONNECTION KILLED THE SURVIVORS' : `${score} HOSTILES  •  SURVIVED ${survivalTime}`,
       {
       fontFamily: '"Share Tech Mono", monospace',
       fontSize: '17px',
@@ -5452,6 +5580,24 @@ export class ArenaScene extends Phaser.Scene {
     ]).setDepth(50).setAlpha(0);
     this.tweens.add({ targets: overlay, alpha: 1, duration: 400 });
     this.tweens.add({ targets: title, scale: 1, duration: 430, ease: 'Back.out' });
+  }
+}
+
+function readHudPreview(): HudPreview | undefined {
+  if (!import.meta.env.DEV || typeof window === 'undefined') return undefined;
+  switch (new URLSearchParams(window.location.search).get('hudPreview')) {
+    case 'solo-full':
+      return { duo: false, hostHealth: 100, guestHealth: 0, hostAlive: true, guestAlive: false };
+    case 'solo-half':
+      return { duo: false, hostHealth: 50, guestHealth: 0, hostAlive: true, guestAlive: false };
+    case 'duo-full':
+      return { duo: true, hostHealth: 100, guestHealth: 100, hostAlive: true, guestAlive: true };
+    case 'duo-half':
+      return { duo: true, hostHealth: 50, guestHealth: 50, hostAlive: true, guestAlive: true };
+    case 'duo-dead':
+      return { duo: true, hostHealth: 100, guestHealth: 0, hostAlive: true, guestAlive: false };
+    default:
+      return undefined;
   }
 }
 

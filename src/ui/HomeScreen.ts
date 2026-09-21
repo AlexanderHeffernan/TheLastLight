@@ -440,8 +440,8 @@ export class HomeScreen {
       connection: (state: 'connected' | 'reconnecting' | 'failed') => {
         window.dispatchEvent(new CustomEvent('last-light:duo-connection', { detail: { state } }));
       },
-      gameOver: (message: string) => {
-        window.dispatchEvent(new CustomEvent('last-light:duo-game-over', { detail: { message } }));
+      gameOver: (message: string, score?: number) => {
+        window.dispatchEvent(new CustomEvent('last-light:duo-game-over', { detail: { message, score } }));
       },
       leaderboardResult: (result: { rank: number | null; newRecord: boolean; available: boolean }) => {
         window.dispatchEvent(new CustomEvent('last-light:duo-leaderboard-result', { detail: result }));

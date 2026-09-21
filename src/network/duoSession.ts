@@ -67,7 +67,7 @@ export interface DuoSessionCallbacks {
   ping?: (milliseconds: number | null) => void;
   connection?: (state: 'connected' | 'reconnecting' | 'failed') => void;
   disconnected?: (reason: string) => void;
-  gameOver?: (message: string) => void;
+  gameOver?: (message: string, score?: number) => void;
   leaderboardResult?: (result: DuoLeaderboardResult) => void;
 }
 
@@ -298,9 +298,9 @@ export class DuoSession {
     }
   }
 
-  sendGameOver(message: string): void {
+  sendGameOver(message: string, score: number): void {
     if (this.role !== 'host' || !this.isConnected) return;
-    this.send({ type: 'game-over', message });
+    this.send({ type: 'game-over', message, score });
   }
 
   sendLeaderboardResult(result: DuoLeaderboardResult): void {
@@ -808,7 +808,11 @@ export class DuoSession {
       return;
     }
     if (message.type === 'game-over') {
-      this.callbacks.gameOver?.(String(message.message ?? 'OPERATION ENDED // BOTH SURVIVORS DOWN'));
+      const score = Number(message.score);
+      this.callbacks.gameOver?.(
+        String(message.message ?? 'OPERATION ENDED // BOTH SURVIVORS DOWN'),
+        Number.isInteger(score) && score >= 0 ? score : undefined,
+      );
       if (this.role === 'guest') this.pollLeaderboardResult();
       return;
     }

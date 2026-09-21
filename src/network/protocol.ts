@@ -20,6 +20,7 @@ export interface PlayerSnapshot {
   rotation: number;
   health: number;
   alive: boolean;
+  eliminations: number;
   invulnerableUntil: number;
   flareCharges: number;
   adrenalineMs: number;
