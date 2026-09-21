@@ -110,6 +110,7 @@ export type DuoEventType =
   | 'horde-warning'
   | 'boss-introduction'
   | 'boss-warning'
+  | 'zombie-death'
   | 'flare-cartridge'
   | 'flare-collected'
   | 'flare-launch'

@@ -706,6 +706,15 @@ export class ArenaScene extends Phaser.Scene {
       case 'boss-warning':
         this.renderRemoteBossWarning(payload, number, string);
         break;
+      case 'zombie-death':
+        this.createCorpse(
+          string('textureKey', 'zombie'),
+          number('x'),
+          number('y'),
+          number('rotation'),
+          number('scale', 1),
+        );
+        break;
       case 'flare-cartridge':
         this.renderRemoteFlareCartridge(payload, number);
         break;
@@ -1431,6 +1440,25 @@ export class ArenaScene extends Phaser.Scene {
 
   private findNetworkObject(group: any, id: string): any | undefined {
     return group.getChildren().find((object) => object.getData('networkId') === id);
+  }
+
+  private createCorpse(
+    textureKey: string,
+    x: number,
+    y: number,
+    rotation: number,
+    baseScale: number,
+  ): Phaser.GameObjects.Image {
+    const corpse = this.add.image(x, y, textureKey)
+      .setDepth(-1)
+      .setRotation(rotation)
+      .setScale(baseScale, baseScale * 0.82)
+      .setTint(0x51352f)
+      .setAlpha(0.55);
+    this.corpses.push(corpse);
+    if (this.corpses.length > 22) this.corpses.shift()!.destroy();
+    this.tweens.add({ targets: corpse, alpha: 0.18, delay: 11500, duration: 4500 });
+    return corpse;
   }
 
   private createRemoteZombie(snapshot: ZombieSnapshot): any {
@@ -4871,19 +4899,20 @@ export class ArenaScene extends Phaser.Scene {
   hitBarrel(bullet, barrel) {
     if (!bullet.active || !barrel.active || barrel.getData('exploded')) return;
     const impactAngle = bullet.rotation;
+    const initiatorId = bullet.getData('ownerId') as DuoPlayerId | undefined;
     this.playImpactEffect('bullet-impact', bullet.x, bullet.y, impactAngle);
     this.makeSparks(bullet.x, bullet.y, impactAngle, 6);
     this.destroyBullet(bullet);
     const health = barrel.getData('health') - 1;
     barrel.setData('health', health).setTintFill(0xffc27b);
     if (health <= 0) {
-      this.explodeBarrel(barrel, impactAngle);
+      this.explodeBarrel(barrel, impactAngle, initiatorId);
     } else {
       this.time.delayedCall(70, () => barrel.active && barrel.clearTint());
     }
   }
 
-  explodeBarrel(barrel, impactAngle = 0) {
+  explodeBarrel(barrel, impactAngle = 0, initiatorId?: DuoPlayerId) {
     if (!barrel.active || barrel.getData('exploded')) return;
     barrel.setData('exploded', true);
     const { x, y } = barrel;
@@ -4891,17 +4920,17 @@ export class ArenaScene extends Phaser.Scene {
     if (typeof slotIndex === 'number') this.barrelSlots[slotIndex].occupied = false;
     barrel.getData('shadow')?.destroy();
     barrel.disableBody(true, true);
-    this.makeBlast(x, y, impactAngle, 125, 3);
+    this.makeBlast(x, y, impactAngle, 125, 3, undefined, true, initiatorId);
 
     this.barrels.getChildren().slice().forEach((other) => {
       if (!other.active || other.getData('exploded') || Phaser.Math.Distance.Between(x, y, other.x, other.y) > 145) return;
-      this.time.delayedCall(110, () => this.explodeBarrel(other, Phaser.Math.Angle.Between(x, y, other.x, other.y)));
+      this.time.delayedCall(110, () => this.explodeBarrel(
+        other,
+        Phaser.Math.Angle.Between(x, y, other.x, other.y),
+        initiatorId,
+      ));
     });
-    this.livingActors().forEach((actor) => {
-      if (Phaser.Math.Distance.Between(x, y, actor.sprite.x, actor.sprite.y) < 108) {
-        this.damagePlayer(34, actor.id);
-      }
-    });
+    this.damageLivingInRadius(x, y, 108, 34, initiatorId);
   }
 
   private shouldCollideZombieWithProp(zombie: any): boolean {
@@ -5154,12 +5183,18 @@ export class ArenaScene extends Phaser.Scene {
     this.killZombie(zombie, impactAngle, killerId);
   }
 
-  killZombie(zombie, impactAngle, killerId?: DuoPlayerId) {
+  killZombie(
+    zombie,
+    impactAngle,
+    killerId?: DuoPlayerId,
+    explosionInitiatorId?: DuoPlayerId,
+  ) {
     if (!zombie.active) return;
     const { x, y, rotation } = zombie;
     const type = zombie.getData('type');
     const bossKind = zombie.getData('bossKind') as BossKind | undefined;
     const baseScale = zombie.getData('baseScale');
+    const blastInitiatorId = explosionInitiatorId ?? killerId;
     const voice = bossKind ? BOSS_DEFINITIONS[bossKind].voice : type as MonsterType;
     this.monsterAudio.play(voice, 'death', x, y, this.player.x, this.player.y);
     if (killerId) {
@@ -5168,15 +5203,20 @@ export class ArenaScene extends Phaser.Scene {
     }
     this.score = this.totalEliminations();
 
-    const corpse = this.add.image(x, y, zombie.getData('textureKey'))
-      .setDepth(-1)
-      .setRotation(rotation + Phaser.Math.FloatBetween(-0.22, 0.22))
-      .setScale(baseScale, baseScale * 0.82)
-      .setTint(0x51352f)
-      .setAlpha(0.55);
-    this.corpses.push(corpse);
-    if (this.corpses.length > 22) this.corpses.shift()!.destroy();
-    this.tweens.add({ targets: corpse, alpha: 0.18, delay: 11500, duration: 4500 });
+    const corpse = this.createCorpse(
+      zombie.getData('textureKey'),
+      x,
+      y,
+      rotation + Phaser.Math.FloatBetween(-0.22, 0.22),
+      baseScale,
+    );
+    this.emitDuoEvent('zombie-death', {
+      textureKey: zombie.getData('textureKey'),
+      x,
+      y,
+      rotation: corpse.rotation,
+      scale: baseScale,
+    });
 
     zombie.getData('shadow')?.destroy();
     zombie.getData('aura')?.destroy();
@@ -5196,19 +5236,30 @@ export class ArenaScene extends Phaser.Scene {
     }
     zombie.destroy();
 
-    if (type === 'charred') this.makeBlast(x, y, impactAngle);
+    if (type === 'charred') {
+      this.makeBlast(x, y, impactAngle, 76, 2, undefined, true, blastInitiatorId);
+    }
     if (bossKind) {
       this.audio.playTone(bossKind === 'furnace' ? 84 : 44, 0.9, 0.085, 'sawtooth');
       this.makeBossShockwave(x, y, BOSS_DEFINITIONS[bossKind].color);
       this.announce(`${BOSS_DEFINITIONS[bossKind].name} DOWN`, 'APEX CONTACT ELIMINATED');
       if (bossKind === 'furnace') {
-        this.makeBlast(x, y, impactAngle, 145, 4);
-        this.damageLivingInRadius(x, y, 128, 44);
+        this.makeBlast(x, y, impactAngle, 145, 4, undefined, true, blastInitiatorId);
+        this.damageLivingInRadius(x, y, 128, 44, blastInitiatorId);
       }
     }
   }
 
-  makeBlast(x, y, impactAngle, radius = 76, damage = 2, source?: any, applyDamage = true) {
+  makeBlast(
+    x,
+    y,
+    impactAngle,
+    radius = 76,
+    damage = 2,
+    source?: any,
+    applyDamage = true,
+    initiatorId?: DuoPlayerId,
+  ) {
     this.queueNetworkEffect({ kind: 'blast', x, y, angle: impactAngle, radius });
     if (!this.isNetworkClient || applyDamage) {
       this.audio.playNoise(0.32, 0.13, 850, { x, y });
@@ -5252,7 +5303,7 @@ export class ArenaScene extends Phaser.Scene {
       }
       this.makeBlood(other.x, other.y, angle, 4);
       if (health <= 0) {
-        this.killZombie(other, angle);
+        this.killZombie(other, angle, undefined, initiatorId);
       } else {
         other.setVelocity(Math.cos(angle) * 220, Math.sin(angle) * 220);
         other.setData('staggerUntil', this.time.now + 160);
@@ -5303,8 +5354,15 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
-  private damageLivingInRadius(x: number, y: number, radius: number, amount: number): void {
+  private damageLivingInRadius(
+    x: number,
+    y: number,
+    radius: number,
+    amount: number,
+    initiatorId?: DuoPlayerId,
+  ): void {
     this.livingActors().forEach((actor) => {
+      if (this.isDuo && initiatorId && actor.id !== initiatorId) return;
       if (Phaser.Math.Distance.Between(x, y, actor.sprite.x, actor.sprite.y) <= radius) {
         this.damagePlayer(amount, actor.id);
       }
