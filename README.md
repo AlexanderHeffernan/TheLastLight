@@ -16,7 +16,7 @@ The current release is a complete score-attack survival game. Runs are intention
 - Dynamic darkness, directional floodlights, aerial crimson flares, occlusion, and projected shadows
 - Four infected archetypes with distinct silhouettes, movement, health, and audio behavior
 - A wave director that escalates pressure and introduces threats over time
-- Generator-fabricated flares and delayed supply drops containing health, repairs, or flare charges
+- Generator-fabricated flares and delayed supply drops containing health or repairs
 - Procedural monster vocals and combat audio with a rotating original soundtrack
 - Persistent global deployment count, leaderboard, special skin access, and repository-driven changelog
 - Private two-player WebRTC sessions with host-authoritative simulation

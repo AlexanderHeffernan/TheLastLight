@@ -638,8 +638,6 @@ export class ArenaScene extends Phaser.Scene {
         ? Math.min(...[...this.playerActors.values()].map((actor) => actor.health))
         : this.health,
       heal: (amount) => this.healPlayer(amount),
-      getFlareCharges: () => this.flares.chargeCount(),
-      addFlare: () => this.flares.addCharge(),
       needsRepair: () => this.outpostNeedsRepair(),
       getBaseIntegrity: () => this.outpostIntegrity(),
       repairOutpost: () => this.repairOutpost(),
@@ -1841,11 +1839,7 @@ export class ArenaScene extends Phaser.Scene {
       this.networkSupplyGlow = undefined;
       return;
     }
-    const texture = pickup.kind === 'flare'
-      ? 'flare-cartridge'
-      : pickup.kind === 'repair'
-        ? 'repair-kit'
-        : 'medkit';
+    const texture = pickup.kind === 'repair' ? 'repair-kit' : 'medkit';
     if (!this.networkSupplyPickup || this.networkSupplyPickup.getData('kind') !== pickup.kind) {
       this.networkSupplyPickup?.destroy();
       this.networkSupplyGlow?.destroy();
@@ -2098,11 +2092,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private showRemoteSupplyPickup(kind: string, x: number, y: number): void {
-    const texture = kind === 'flare'
-      ? 'flare-cartridge'
-      : kind === 'repair'
-        ? 'repair-kit'
-        : 'medkit';
+    const texture = kind === 'repair' ? 'repair-kit' : 'medkit';
     this.networkSupplyCache?.setTexture('supply-cache-open');
     this.networkSupplyLabel?.setText(`${kind.toUpperCase()} READY`).setVisible(true);
     if (!this.networkSupplyPickup || this.networkSupplyPickup.getData('kind') !== kind) {

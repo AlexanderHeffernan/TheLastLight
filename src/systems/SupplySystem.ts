@@ -3,8 +3,6 @@ import Phaser from 'phaser';
 interface SupplyHooks {
   getHealth: () => number;
   heal: (amount: number) => void;
-  getFlareCharges: () => number;
-  addFlare: () => boolean;
   needsRepair: () => boolean;
   getBaseIntegrity: () => number;
   repairOutpost: () => void;
@@ -17,7 +15,7 @@ interface SupplyHooks {
 }
 
 type DropState = 'waiting' | 'descending' | 'ready' | 'opened';
-type PickupKind = 'medkit' | 'flare' | 'repair';
+type PickupKind = 'medkit' | 'repair';
 
 export class SupplySystem {
   private readonly pickups: Phaser.Physics.Arcade.Group;
@@ -204,9 +202,7 @@ export class SupplySystem {
     });
     this.landingLabel.setText(kind === 'medkit'
       ? 'MEDKIT READY'
-      : kind === 'repair'
-        ? 'REPAIR KIT READY'
-        : 'FLARE CARTRIDGE');
+      : 'REPAIR KIT READY');
     this.spawnPickup(kind, this.cache.x, this.cache.y - 8);
     this.scene.time.delayedCall(28000, () => this.beginDrop());
   }
@@ -215,14 +211,12 @@ export class SupplySystem {
     const health = this.hooks.getHealth();
     const healthUrgency = Phaser.Math.Clamp((40 - health) / 40, 0, 1);
     const baseUrgency = Phaser.Math.Clamp((0.4 - this.hooks.getBaseIntegrity()) / 0.4, 0, 1);
-    const noFlares = this.hooks.getFlareCharges() === 0;
     const choices: { kind: PickupKind; weight: number }[] = [];
 
     if (health < 100) choices.push({ kind: 'medkit', weight: 20 + healthUrgency * 100 });
     if (this.hooks.needsRepair()) choices.push({ kind: 'repair', weight: 20 + baseUrgency * 100 });
-    choices.push({ kind: 'flare', weight: 20 + (noFlares ? 100 : 0) });
 
-    if (choices.length === 0) return this.hooks.needsRepair() ? 'repair' : 'medkit';
+    if (choices.length === 0) return 'medkit';
     let roll = Phaser.Math.FloatBetween(0, choices.reduce((total, choice) => total + choice.weight, 0));
     for (const choice of choices) {
       roll -= choice.weight;
@@ -340,9 +334,6 @@ export class SupplySystem {
     } else if (kind === 'repair') {
       this.hooks.repairOutpost();
       this.hooks.announce('OUTPOST RESTORED', 'GENERATOR, LIGHTS, AND BARRICADES OPERATIONAL');
-    } else if (kind === 'flare') {
-      this.hooks.addFlare();
-      this.hooks.announce('FLARE CARTRIDGE', 'AERIAL FLARE CHARGE ADDED');
     }
     this.clearDrop();
   }
