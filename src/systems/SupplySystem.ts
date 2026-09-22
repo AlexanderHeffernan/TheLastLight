@@ -3,9 +3,6 @@ import Phaser from 'phaser';
 interface SupplyHooks {
   getHealth: () => number;
   heal: (amount: number) => void;
-  canAddFlare: () => boolean;
-  getFlareCharges: () => number;
-  addFlare: () => boolean;
   needsRepair: () => boolean;
   getBaseIntegrity: () => number;
   repairOutpost: () => void;
@@ -18,7 +15,7 @@ interface SupplyHooks {
 }
 
 type DropState = 'waiting' | 'descending' | 'ready' | 'opened';
-type PickupKind = 'medkit' | 'adrenaline' | 'flare' | 'repair';
+type PickupKind = 'medkit' | 'adrenaline' | 'repair';
 
 export class SupplySystem {
   private readonly pickups: Phaser.Physics.Arcade.Group;
@@ -228,8 +225,6 @@ export class SupplySystem {
       ? 'MEDKIT READY'
       : kind === 'repair'
         ? 'REPAIR KIT READY'
-      : kind === 'flare'
-        ? 'FLARE CARTRIDGE'
         : 'ADRENALINE READY');
     this.spawnPickup(kind, this.cache.x, this.cache.y - 8);
     this.scene.time.delayedCall(28000, () => this.beginDrop());
@@ -239,13 +234,11 @@ export class SupplySystem {
     const health = this.hooks.getHealth();
     const healthUrgency = Phaser.Math.Clamp((40 - health) / 40, 0, 1);
     const baseUrgency = Phaser.Math.Clamp((0.4 - this.hooks.getBaseIntegrity()) / 0.4, 0, 1);
-    const noFlares = this.hooks.getFlareCharges() === 0;
-    const emergency = healthUrgency > 0 || baseUrgency > 0 || noFlares;
+    const emergency = healthUrgency > 0 || baseUrgency > 0;
     const choices: { kind: PickupKind; weight: number }[] = [];
 
     if (health < 100) choices.push({ kind: 'medkit', weight: 20 + healthUrgency * 100 });
     if (this.hooks.needsRepair()) choices.push({ kind: 'repair', weight: 20 + baseUrgency * 100 });
-    if (this.hooks.canAddFlare()) choices.push({ kind: 'flare', weight: 20 + (noFlares ? 100 : 0) });
     choices.push({ kind: 'adrenaline', weight: 25 + (emergency ? 0 : 35) });
 
     let roll = Phaser.Math.FloatBetween(0, choices.reduce((total, choice) => total + choice.weight, 0));
@@ -297,20 +290,21 @@ export class SupplySystem {
   }
 
   private spawnPickup(kind: PickupKind, x: number, y: number): void {
+    const restorative = kind === 'medkit' || kind === 'repair';
     const shadow = this.scene.add.ellipse(x + 1, y + 6, 20, 9, 0x000000, 0.28).setDepth(2);
     const glow = this.scene.add.image(x, y, 'glow')
       .setDepth(16)
       .setScale(0.82)
       .setAlpha(0.78)
-      .setTint(kind === 'medkit' || kind === 'repair' ? 0x84e996 : kind === 'flare' ? 0xff4a2c : 0xffb14c)
+      .setTint(restorative ? 0x84e996 : 0xffb14c)
       .setBlendMode(Phaser.BlendModes.ADD);
     const coreGlow = this.scene.add.image(x, y, 'glow')
       .setDepth(16)
       .setScale(0.3)
       .setAlpha(1)
-      .setTint(kind === 'medkit' || kind === 'repair' ? 0xb6ffae : kind === 'flare' ? 0xff6a38 : 0xffd06a)
+      .setTint(restorative ? 0xb6ffae : 0xffd06a)
       .setBlendMode(Phaser.BlendModes.ADD);
-    const texture = kind === 'flare' ? 'flare-cartridge' : kind === 'repair' ? 'repair-kit' : kind;
+    const texture = kind === 'repair' ? 'repair-kit' : kind;
     const pickup = this.pickups.create(x, y, texture)
       .setDepth(3)
       .setData({ kind, shadow, glow, coreGlow });
@@ -355,7 +349,6 @@ export class SupplySystem {
     if (!pickup.active || this.hooks.isGameOver()) return;
     const kind = pickup.getData('kind');
     if (kind === 'medkit' && this.hooks.getHealth() >= 100) return;
-    if (kind === 'flare' && !this.hooks.canAddFlare()) return;
 
     this.destroyPickup(pickup);
 
@@ -365,9 +358,6 @@ export class SupplySystem {
     } else if (kind === 'repair') {
       this.hooks.repairOutpost();
       this.hooks.announce('OUTPOST RESTORED', 'GENERATOR, LIGHTS, AND BARRICADES OPERATIONAL');
-    } else if (kind === 'flare') {
-      this.hooks.addFlare();
-      this.hooks.announce('FLARE CARTRIDGE', 'AERIAL FLARE CHARGE ADDED');
     } else {
       this.players.forEach((target) => this.adrenalineUntil.set(target, this.scene.time.now + 10000));
       this.hooks.announce('ADRENALINE ACTIVE', 'MOVEMENT AND FIRE RATE INCREASED');

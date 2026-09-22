@@ -18,7 +18,6 @@ interface FlareHooks {
 }
 
 export class FlareSystem {
-  private readonly capacity = 3;
   private readonly rechargeDuration = 45000;
   private readonly firstChargeDuration = 38000;
   private readonly key: Phaser.Input.Keyboard.Key;
@@ -86,10 +85,6 @@ export class FlareSystem {
     this.refreshHud();
   }
 
-  canAddCharge(): boolean {
-    return this.charges < this.capacity;
-  }
-
   chargeCount(): number {
     return this.charges;
   }
@@ -100,14 +95,6 @@ export class FlareSystem {
       && this.charges > 0
       && !this.launching
       && time >= this.activeUntil;
-  }
-
-  addCharge(): boolean {
-    if (!this.canAddCharge()) return false;
-    this.charges += 1;
-    this.unlocked = true;
-    this.refreshHud();
-    return true;
   }
 
   launch(angle: number, time: number, origin?: Phaser.Physics.Arcade.Sprite): void {
@@ -221,7 +208,7 @@ export class FlareSystem {
 
   private collectCartridge(): void {
     const pickup = this.pendingCartridge;
-    if (!pickup?.active || !pickup.getData('ready') || this.hooks.isGameOver() || !this.canAddCharge()) return;
+    if (!pickup?.active || !pickup.getData('ready') || this.hooks.isGameOver()) return;
 
     const shadow = pickup.getData('shadow');
     const glow = pickup.getData('glow');
@@ -238,7 +225,7 @@ export class FlareSystem {
     this.charges += 1;
     this.unlocked = true;
     this.audio.playTone(520, 0.13, 0.035, 'triangle');
-    this.hooks.announce('FLARE COLLECTED', `${this.charges} / ${this.capacity} READY • PRESS F TO LAUNCH`);
+    this.hooks.announce('FLARE COLLECTED', `${this.charges} READY • PRESS F TO LAUNCH`);
     this.refreshHud();
   }
 
@@ -314,7 +301,7 @@ export class FlareSystem {
     const visible = this.unlocked || !!this.pendingCartridge;
     this.inventoryText.setVisible(!this.touchEnabled && visible);
     this.chargeText.setVisible(!this.touchEnabled && visible);
-    const inventoryLabel = `FLARE GUN  •  ${this.charges} / ${this.capacity}`;
+    const inventoryLabel = `FLARE GUN  •  ${this.charges} READY`;
     if (inventoryLabel !== this.lastInventoryLabel) {
       this.lastInventoryLabel = inventoryLabel;
       this.inventoryText.setText(inventoryLabel);
@@ -327,9 +314,7 @@ export class FlareSystem {
     const productionStatus = !generatorOnline
       ? 'GENERATOR OFFLINE'
       : this.pendingCartridge
-        ? this.charges >= this.capacity
-          ? 'CARTRIDGE WAITING • INVENTORY FULL'
-          : 'COLLECT CARTRIDGE AT GENERATOR'
+        ? 'COLLECT CARTRIDGE AT GENERATOR'
         : `${generatorLabel} MAKING FLARE • ${seconds}s`;
 
     const detailLabel = `[F]  LAUNCH AERIAL FLARE\n${productionStatus}`;

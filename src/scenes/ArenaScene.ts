@@ -595,9 +595,6 @@ export class ArenaScene extends Phaser.Scene {
         ? Math.min(...[...this.playerActors.values()].map((actor) => actor.health))
         : this.health,
       heal: (amount) => this.healPlayer(amount),
-      canAddFlare: () => this.flares.canAddCharge(),
-      getFlareCharges: () => this.flares.chargeCount(),
-      addFlare: () => this.flares.addCharge(),
       needsRepair: () => this.outpostNeedsRepair(),
       getBaseIntegrity: () => this.outpostIntegrity(),
       repairOutpost: () => this.repairOutpost(),
@@ -1361,7 +1358,7 @@ export class ArenaScene extends Phaser.Scene {
       actor.flareCharges = player.flareCharges;
       actor.adrenalineUntil = this.time.now + Math.max(0, player.adrenalineMs ?? 0);
       if (player.id === this.localPlayerId) {
-        this.networkFlareInventory?.setText(`FLARES  ${player.flareCharges} / 3  •  F TO LAUNCH`);
+        this.networkFlareInventory?.setText(`FLARES  ${player.flareCharges} READY  •  F TO LAUNCH`);
       }
       if (player.id !== this.localPlayerId) actor.aim = player.rotation + SOUTH_OFFSET;
       if (actor.sprite.body) actor.sprite.body.enable = actor.alive;
@@ -1704,13 +1701,11 @@ export class ArenaScene extends Phaser.Scene {
       this.networkSupplyGlow = undefined;
       return;
     }
-    const texture = pickup.kind === 'flare'
-      ? 'flare-cartridge'
-      : pickup.kind === 'repair'
-        ? 'repair-kit'
-        : pickup.kind === 'adrenaline'
-          ? 'adrenaline'
-          : 'medkit';
+    const texture = pickup.kind === 'repair'
+      ? 'repair-kit'
+      : pickup.kind === 'adrenaline'
+        ? 'adrenaline'
+        : 'medkit';
     if (!this.networkSupplyPickup || this.networkSupplyPickup.getData('kind') !== pickup.kind) {
       this.networkSupplyPickup?.destroy();
       this.networkSupplyGlow?.destroy();
@@ -1720,7 +1715,7 @@ export class ArenaScene extends Phaser.Scene {
       this.networkSupplyGlow = this.add.image(pickup.x, pickup.y, 'glow')
         .setDepth(16)
         .setScale(0.72)
-        .setTint(pickup.kind === 'flare' ? 0xff4a2c : 0x84e996)
+        .setTint(0x84e996)
         .setAlpha(0.7)
         .setBlendMode(Phaser.BlendModes.ADD);
     }
@@ -1838,13 +1833,11 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private showRemoteSupplyPickup(kind: string, x: number, y: number): void {
-    const texture = kind === 'flare'
-      ? 'flare-cartridge'
-      : kind === 'repair'
-        ? 'repair-kit'
-        : kind === 'adrenaline'
-          ? 'adrenaline'
-          : 'medkit';
+    const texture = kind === 'repair'
+      ? 'repair-kit'
+      : kind === 'adrenaline'
+        ? 'adrenaline'
+        : 'medkit';
     this.networkSupplyCache?.setTexture('supply-cache-open');
     this.networkSupplyLabel?.setText(`${kind.toUpperCase()} READY`).setVisible(true);
     if (!this.networkSupplyPickup || this.networkSupplyPickup.getData('kind') !== kind) {
@@ -1853,7 +1846,7 @@ export class ArenaScene extends Phaser.Scene {
       this.networkSupplyPickup = this.add.image(x, y, texture).setDepth(3).setData('kind', kind);
       this.networkSupplyGlow = this.add.image(x, y, 'glow')
         .setDepth(16).setScale(0.72)
-        .setTint(kind === 'flare' ? 0xff4a2c : 0x84e996)
+        .setTint(0x84e996)
         .setAlpha(0.7).setBlendMode(Phaser.BlendModes.ADD);
     }
     this.networkSupplyPickup.setPosition(x, y);
@@ -2813,7 +2806,7 @@ export class ArenaScene extends Phaser.Scene {
         backgroundColor: '#071007ee',
         padding: { x: 8, y: 4 },
       }).setOrigin(0.5).setDepth(40).setVisible(false);
-      this.networkFlareInventory = this.add.text(WIDTH - 25, 16, 'FLARES  0 / 3  •  F TO LAUNCH', {
+      this.networkFlareInventory = this.add.text(WIDTH - 25, 16, 'FLARES  0 READY  •  F TO LAUNCH', {
         ...labelStyle,
         fontSize: '14px',
         color: '#ff7663',
