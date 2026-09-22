@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
@@ -21,6 +21,9 @@ const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const MAX_RATE_LIMIT_ENTRIES = 10_000;
 const skinAdminToken = process.env.SKIN_ADMIN_TOKEN?.trim() || undefined;
+const turnUrls = (process.env.TURN_URLS ?? '').split(',').map((url) => url.trim()).filter(Boolean);
+const turnSharedSecret = process.env.TURN_SHARED_SECRET?.trim() || undefined;
+const TURN_CREDENTIAL_TTL_SECONDS = 60 * 60;
 
 await Promise.all([gameStore.load(), changelog.load(), privateRooms.load()]);
 
@@ -29,6 +32,22 @@ const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
     if (request.method === 'GET' && url.pathname === '/api/status') {
       return json(response, { ...gameStore.status(), lastUpdate: lastUpdateValue });
+    }
+    if (request.method === 'GET' && url.pathname === '/api/ice-servers') {
+      if (!allow(request, 'ice-servers', 30)) return json(response, { error: 'Too many requests' }, 429);
+      const iceServers: Array<{ urls: string[]; username?: string; credential?: string }> = [{
+        urls: [
+          'stun:stun.l.google.com:19302',
+          'stun:stun1.l.google.com:19302',
+          'stun:stun2.l.google.com:19302',
+        ],
+      }];
+      if (turnUrls.length > 0 && turnSharedSecret) {
+        const username = `${Math.floor(Date.now() / 1000) + TURN_CREDENTIAL_TTL_SECONDS}:${randomUUID()}`;
+        const credential = createHmac('sha1', turnSharedSecret).update(username).digest('base64');
+        iceServers.push({ urls: turnUrls, username, credential });
+      }
+      return json(response, { iceServers });
     }
     if (request.method === 'POST' && url.pathname === '/api/plays') {
       if (!allow(request, 'plays', 30)) return json(response, { error: 'Too many requests' }, 429);

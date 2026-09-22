@@ -16,6 +16,7 @@ const SESSION_TIMEOUT_MS = 120000;
 const PING_INTERVAL_MS = 1000;
 const HEARTBEAT_TIMEOUT_MS = 10000;
 const RECONNECT_GRACE_MS = 20000;
+const FRESH_PEER_FALLBACK_MS = 8000;
 const ICE_GATHERING_TIMEOUT_MS = 8000;
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [{
   urls: [
@@ -105,6 +106,7 @@ export class DuoSession {
   private pendingEvents: DuoEvent[] = [];
   private pendingIncomingEvents: DuoEvent[] = [];
   private reconnectTimer?: number;
+  private freshPeerTimer?: number;
   private reconnecting = false;
   private offerPoll?: number;
   private answerPoll?: number;
@@ -118,12 +120,18 @@ export class DuoSession {
   private peerReady = false;
   private remotePaused = false;
   private localPaused = false;
+  private localLifecyclePaused = false;
+  private remoteLifecyclePaused = false;
   private lastInputSequence = -1;
   private restartGeneration = 0;
   private handledRestartGeneration = 0;
   private restartInProgress = false;
   private leaderboardPolling = false;
   private leaderboardDelivered = false;
+  private iceServers: RTCIceServer[] = DEFAULT_ICE_SERVERS;
+  private acceptedOfferSdp?: string;
+  private offerPollInFlight = false;
+  private answerPollInFlight = false;
   private lobby: DuoLobbyState;
 
   private constructor(options: {
@@ -155,6 +163,9 @@ export class DuoSession {
       guestConnected: false,
       started: false,
     };
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    window.addEventListener('pagehide', this.handlePageHide);
+    window.addEventListener('pageshow', this.handlePageShow);
   }
 
   static async createHost(
@@ -174,6 +185,7 @@ export class DuoSession {
       hostToken: response.hostToken,
       callbacks,
     });
+    await session.loadIceServers();
     session.startHostPolling();
     return session;
   }
@@ -194,7 +206,13 @@ export class DuoSession {
       peerId,
       callbacks,
     });
-    await session.startGuestConnection();
+    await session.loadIceServers();
+    try {
+      await session.startGuestConnection();
+    } catch (error) {
+      session.close();
+      throw error;
+    }
     return session;
   }
 
@@ -227,7 +245,7 @@ export class DuoSession {
       pending.forEach((event) => callbacks.event?.(event));
     }
     if (this.peerReady) callbacks.ready?.();
-    if (this.remotePaused) callbacks.paused?.(true);
+    if (this.effectivePause()) callbacks.paused?.(true);
   }
 
   updateSkin(skinId: string): void {
@@ -270,7 +288,8 @@ export class DuoSession {
   }
 
   sendInput(input: DuoInput): void {
-    if (this.role !== 'guest' || !this.isConnected || this.started === false) return;
+    if (this.role !== 'guest' || !this.isConnected || this.started === false
+      || this.localLifecyclePaused || this.remoteLifecyclePaused) return;
     if (this.inputChannel?.readyState !== 'open') return;
     if (this.inputChannel.bufferedAmount > 64 * 1024) return;
     try {
@@ -357,6 +376,7 @@ export class DuoSession {
     this.teardownPeer();
     this.peerReady = false;
     this.remotePaused = false;
+    this.remoteLifecyclePaused = false;
     this.lastInputSequence = -1;
     this.started = false;
     this.lobby.guestCallsign = '';
@@ -373,8 +393,13 @@ export class DuoSession {
       this.pollLeaderboardResult();
     }
     this.closed = true;
+    document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    window.removeEventListener('pagehide', this.handlePageHide);
+    window.removeEventListener('pageshow', this.handlePageShow);
     if (this.reconnectTimer !== undefined) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
+    if (this.freshPeerTimer !== undefined) window.clearTimeout(this.freshPeerTimer);
+    this.freshPeerTimer = undefined;
     if (this.offerPoll !== undefined) window.clearInterval(this.offerPoll);
     if (this.answerPoll !== undefined) window.clearInterval(this.answerPoll);
     if (this.restartAnswerPoll !== undefined) window.clearInterval(this.restartAnswerPoll);
@@ -392,23 +417,29 @@ export class DuoSession {
   }
 
   private async pollOffers(): Promise<void> {
-    if (this.closed || this.role !== 'host') return;
+    if (this.closed || this.role !== 'host' || this.offerPollInFlight) return;
+    this.offerPollInFlight = true;
     try {
       const response = await request<OfferResponse>(
         `/api/private-rooms/${encodeURIComponent(this.roomCode)}/offers`,
         { headers: this.hostHeaders() },
       );
       const offer = response.offers[0];
-      if (!offer || this.peer) return;
+      if (!offer) return;
+      const offerSdp = offer.offer.sdp ?? '';
+      if (this.peer && offerSdp === this.acceptedOfferSdp) return;
       await this.acceptOffer(offer);
-    } catch (error) {
-      // Once WebRTC exists, this poll only keeps the room alive. A transient
-      // API/proxy outage must not end an otherwise healthy P2P match.
-      if (!this.closed && !this.peer) this.callbacks.disconnected?.(messageFromError(error));
+    } catch {
+      // Polling is also the host lease heartbeat. Transient API/proxy outages
+      // are retried on the next tick and must not tear down a healthy session.
+    } finally {
+      this.offerPollInFlight = false;
     }
   }
 
   private async acceptOffer(offer: OfferResponse['offers'][number]): Promise<void> {
+    const previousPeer = this.peer;
+    if (previousPeer) this.teardownPeer();
     const peer = this.makePeer();
     this.peer = peer;
     this.attachStateChannel(peer.createDataChannel(STATE_CHANNEL_LABEL, {
@@ -416,18 +447,22 @@ export class DuoSession {
       maxRetransmits: 0,
     }));
     this.attachEventsChannel(peer.createDataChannel(EVENTS_CHANNEL_LABEL));
-    await peer.setRemoteDescription(offer.offer);
-    const answer = await peer.createAnswer();
-    await peer.setLocalDescription(answer);
-    await waitForIceGathering(peer);
-    await request(`/api/private-rooms/${encodeURIComponent(this.roomCode)}/answers`, {
-      method: 'POST',
-      headers: this.hostHeaders(),
-      body: JSON.stringify({
-        peerId: offer.peerId,
-        answer: peer.localDescription,
-      }),
-    });
+    try {
+      await peer.setRemoteDescription(offer.offer);
+      const answer = await peer.createAnswer();
+      await peer.setLocalDescription(answer);
+      await waitForIceGathering(peer);
+      await request(`/api/private-rooms/${encodeURIComponent(this.roomCode)}/answers`, {
+        method: 'POST',
+        headers: this.hostHeaders(),
+        body: JSON.stringify({ peerId: offer.peerId, answer: peer.localDescription }),
+      });
+    } catch (error) {
+      if (this.peer === peer) this.teardownPeer();
+      throw error;
+    }
+    if (previousPeer && previousPeer !== peer) previousPeer.close();
+    this.acceptedOfferSdp = offer.offer.sdp ?? '';
     setPlayerSkinAccess(offer.callsign, offer.skinIds ?? []);
     this.lobby.guestCallsign = offer.callsign;
     this.lobby.guestSkinIds = getPlayerSkinAccessIds(offer.callsign);
@@ -446,15 +481,47 @@ export class DuoSession {
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
     await waitForIceGathering(peer);
-    await request(`/api/private-rooms/${encodeURIComponent(this.roomCode)}/offers`, {
-      method: 'POST',
-      body: JSON.stringify({
-        peerId: this.peerId,
-        callsign: this.localCallsign,
-        offer: peer.localDescription,
-      }),
-    });
+    await this.publishGuestOffer(peer);
     this.waitForAnswer();
+  }
+
+  private async startFreshGuestConnection(): Promise<void> {
+    if (this.role !== 'guest' || this.closed || !this.reconnecting) return;
+    if (this.answerPoll !== undefined) window.clearInterval(this.answerPoll);
+    this.answerPoll = undefined;
+    this.answerPollInFlight = false;
+    if (this.restartAnswerPoll !== undefined) window.clearInterval(this.restartAnswerPoll);
+    this.restartAnswerPoll = undefined;
+    // Invalidate any ICE-restart promises that are still waiting for
+    // gathering or signaling on the peer we are replacing.
+    this.restartGeneration += 1;
+    this.restartInProgress = false;
+    this.teardownPeer();
+    try {
+      await this.startGuestConnection();
+    } catch {
+      if (!this.closed) this.teardownPeer();
+      // The reconnect deadline remains the single terminal failure path.
+    }
+  }
+
+  private async publishGuestOffer(peer: RTCPeerConnection): Promise<void> {
+    if (!peer.localDescription) throw new Error('Could not create a multiplayer offer.');
+    const options: RequestInit = {
+      method: 'POST',
+      body: JSON.stringify({ peerId: this.peerId, callsign: this.localCallsign, offer: peer.localDescription }),
+    };
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        await request(`/api/private-rooms/${encodeURIComponent(this.roomCode)}/offers`, options);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 4) await delay(SIGNAL_POLL_MS * (attempt + 1));
+      }
+    }
+    throw lastError;
   }
 
   private async startIceRestart(): Promise<void> {
@@ -468,7 +535,7 @@ export class DuoSession {
       const offer = await peer.createOffer({ iceRestart: true });
       await peer.setLocalDescription(offer);
       await waitForIceGathering(peer);
-      if (this.closed || generation !== this.restartGeneration || !peer.localDescription) return;
+      if (this.closed || generation !== this.restartGeneration || this.peer !== peer || !peer.localDescription) return;
       await request(`/api/private-rooms/${encodeURIComponent(this.roomCode)}/restart-offer`, {
         method: 'POST',
         body: JSON.stringify({
@@ -477,16 +544,19 @@ export class DuoSession {
           description: peer.localDescription,
         }),
       });
-      this.startRestartAnswerPolling(generation);
+      if (this.peer === peer && generation === this.restartGeneration) {
+        this.startRestartAnswerPolling(generation, peer);
+      }
     } catch {
-      this.restartInProgress = false;
+      if (this.peer === peer && generation === this.restartGeneration) this.restartInProgress = false;
     }
   }
 
-  private startRestartAnswerPolling(generation: number): void {
+  private startRestartAnswerPolling(generation: number, expectedPeer: RTCPeerConnection): void {
     if (this.restartAnswerPoll !== undefined) window.clearInterval(this.restartAnswerPoll);
     this.restartAnswerPoll = window.setInterval(() => {
-      if (this.closed || generation !== this.restartGeneration || !this.restartInProgress) return;
+      if (this.closed || generation !== this.restartGeneration || !this.restartInProgress
+        || this.peer !== expectedPeer) return;
       const query = new URLSearchParams({
         peerId: this.peerId ?? '',
         generation: String(generation),
@@ -494,10 +564,9 @@ export class DuoSession {
       void request<RestartDescriptionResponse>(
         `/api/private-rooms/${encodeURIComponent(this.roomCode)}/restart-answer?${query}`,
       ).then(async (response) => {
-        if (!response.description || response.generation !== generation || this.closed) return;
-        const peer = this.peer;
-        if (!peer || peer.signalingState !== 'have-local-offer') return;
-        await peer.setRemoteDescription(response.description);
+        if (!response.description || response.generation !== generation || this.closed
+          || this.peer !== expectedPeer || expectedPeer.signalingState !== 'have-local-offer') return;
+        await expectedPeer.setRemoteDescription(response.description);
         this.restartInProgress = false;
         if (this.restartAnswerPoll !== undefined) window.clearInterval(this.restartAnswerPoll);
         this.restartAnswerPoll = undefined;
@@ -537,7 +606,7 @@ export class DuoSession {
     const answer = await peer.createAnswer();
     await peer.setLocalDescription(answer);
     await waitForIceGathering(peer);
-    if (this.closed || !peer.localDescription) return;
+    if (this.closed || this.peer !== peer || !peer.localDescription) return;
     await request(`/api/private-rooms/${encodeURIComponent(this.roomCode)}/restart-answer`, {
       method: 'POST',
       headers: this.hostHeaders(),
@@ -551,29 +620,33 @@ export class DuoSession {
 
   private waitForAnswer(): void {
     const startedAt = Date.now();
+    const expectedPeer = this.peer;
     this.answerPoll = window.setInterval(() => {
-      if (this.closed || this.peer?.remoteDescription) return;
+      if (this.closed || this.peer !== expectedPeer || expectedPeer?.remoteDescription || this.answerPollInFlight) return;
       if (Date.now() - startedAt > SESSION_TIMEOUT_MS) {
         this.close('The host did not respond in time.');
         return;
       }
+      this.answerPollInFlight = true;
       void request<AnswerResponse>(
         `/api/private-rooms/${encodeURIComponent(this.roomCode)}/answers/${encodeURIComponent(this.peerId ?? '')}`,
       ).then(async (response) => {
-        if (this.closed || this.peer?.remoteDescription) return;
+        if (this.closed || this.peer !== expectedPeer || expectedPeer?.remoteDescription) return;
         if (response.error) throw new Error(response.error);
         if (!response.answer) return;
+        await expectedPeer?.setRemoteDescription(response.answer);
         if (this.answerPoll !== undefined) window.clearInterval(this.answerPoll);
-        await this.peer?.setRemoteDescription(response.answer);
-      }).catch((error) => {
-        if (!this.closed) this.callbacks.disconnected?.(messageFromError(error));
+      }).catch(() => {
+        // Signaling polls are retryable until the overall session deadline.
+      }).finally(() => {
+        if (this.peer === expectedPeer) this.answerPollInFlight = false;
       });
     }, SIGNAL_POLL_MS);
   }
 
   private makePeer(): RTCPeerConnection {
     const peer = new RTCPeerConnection({
-      iceServers: DEFAULT_ICE_SERVERS,
+      iceServers: this.iceServers,
       iceCandidatePoolSize: 10,
       bundlePolicy: 'max-bundle',
     });
@@ -614,6 +687,7 @@ export class DuoSession {
       this.lastGameplayMessageAt = this.lastMessageAt;
       this.markConnected();
       this.startPing();
+      this.send({ type: 'lifecycle-pause', paused: this.localLifecyclePaused });
       if (this.role === 'guest') {
         this.send({ type: 'skin', skinId: this.lobby.guestSkinId });
         this.send({ type: 'aim', aim: this.lobby.guestAim });
@@ -701,7 +775,7 @@ export class DuoSession {
     } catch {
       return;
     }
-    if (message.type !== 'input') return;
+    if (message.type !== 'input' || this.localLifecyclePaused || this.remoteLifecyclePaused) return;
     const input = message.input as DuoInput;
     if (!input || !Number.isInteger(input.sequence) || input.sequence <= this.lastInputSequence) return;
     this.lastInputSequence = input.sequence;
@@ -751,6 +825,15 @@ export class DuoSession {
     }
     if (message.type === 'restart-request' && this.role === 'guest') {
       void this.startIceRestart();
+      return;
+    }
+    if (message.type === 'lifecycle-pause') {
+      this.remoteLifecyclePaused = Boolean(message.paused);
+      this.runtimeCallbacks.paused?.(this.effectivePause());
+      if (!this.remoteLifecyclePaused) {
+        this.lastMessageAt = performance.now();
+        this.lastGameplayMessageAt = this.lastMessageAt;
+      }
       return;
     }
     if (message.type === 'skin' && this.role === 'host' && !this.started) {
@@ -822,7 +905,8 @@ export class DuoSession {
     }
     if (message.type === 'input' && this.role === 'host') {
       const input = message.input as DuoInput;
-      if (!input || !Number.isInteger(input.sequence) || input.sequence <= this.lastInputSequence) return;
+      if (this.localLifecyclePaused || this.remoteLifecyclePaused
+        || !input || !Number.isInteger(input.sequence) || input.sequence <= this.lastInputSequence) return;
       this.lastInputSequence = input.sequence;
       this.runtimeCallbacks.input?.(input);
       return;
@@ -838,7 +922,7 @@ export class DuoSession {
     }
     if (message.type === 'pause' && this.role === 'guest') {
       this.remotePaused = Boolean(message.paused);
-      this.runtimeCallbacks.paused?.(this.remotePaused);
+      this.runtimeCallbacks.paused?.(this.effectivePause());
       return;
     }
     if (message.type === 'kick' && this.role === 'guest') {
@@ -878,11 +962,13 @@ export class DuoSession {
     if (transportRecovered && this.peer?.connectionState !== 'connected'
       && this.peer?.iceConnectionState !== 'connected'
       && this.peer?.iceConnectionState !== 'completed') return;
-    const intentionallyPaused = this.role === 'host' ? this.localPaused : this.remotePaused;
+    const intentionallyPaused = this.effectivePause();
     if (!transportRecovered && this.started && !intentionallyPaused
       && performance.now() - this.lastGameplayMessageAt > HEARTBEAT_TIMEOUT_MS) return;
     if (this.reconnectTimer !== undefined) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
+    if (this.freshPeerTimer !== undefined) window.clearTimeout(this.freshPeerTimer);
+    this.freshPeerTimer = undefined;
     const wasReconnecting = this.reconnecting;
     this.reconnecting = false;
     this.restartInProgress = false;
@@ -892,11 +978,17 @@ export class DuoSession {
   }
 
   private beginReconnectGrace(reason: string): void {
-    if (this.closed || this.reconnectTimer !== undefined) return;
+    if (this.closed || this.localLifecyclePaused || this.reconnectTimer !== undefined) return;
     this.reconnecting = true;
     this.callbacks.connection?.('reconnecting');
     if (this.role === 'host') this.send({ type: 'restart-request' });
     else void this.startIceRestart();
+    if (this.role === 'guest') {
+      this.freshPeerTimer = window.setTimeout(() => {
+        this.freshPeerTimer = undefined;
+        void this.startFreshGuestConnection();
+      }, FRESH_PEER_FALLBACK_MS);
+    }
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = undefined;
       if (this.closed) return;
@@ -1007,12 +1099,12 @@ export class DuoSession {
   private startPing(): void {
     if (this.pingTimer !== undefined) window.clearInterval(this.pingTimer);
     this.pingTimer = window.setInterval(() => {
-      if (!this.isConnected) return;
+      if (!this.isConnected || this.localLifecyclePaused || this.remoteLifecyclePaused) return;
       if (this.started && performance.now() - this.lastMessageAt > HEARTBEAT_TIMEOUT_MS) {
         this.beginReconnectGrace('The multiplayer connection stopped responding.');
         return;
       }
-      const intentionallyPaused = this.role === 'host' ? this.localPaused : this.remotePaused;
+      const intentionallyPaused = this.effectivePause();
       if (this.started && !intentionallyPaused
         && performance.now() - this.lastGameplayMessageAt > HEARTBEAT_TIMEOUT_MS) {
         this.beginReconnectGrace('The multiplayer gameplay connection stopped responding.');
@@ -1021,6 +1113,59 @@ export class DuoSession {
       this.pingStartedAt = performance.now();
       this.send({ type: 'ping', sentAt: this.pingStartedAt });
     }, PING_INTERVAL_MS);
+  }
+
+  private readonly handleVisibilityChange = (): void => {
+    this.setLifecyclePaused(document.visibilityState === 'hidden');
+  };
+
+  private readonly handlePageHide = (): void => {
+    this.setLifecyclePaused(true);
+  };
+
+  private readonly handlePageShow = (): void => {
+    this.setLifecyclePaused(document.visibilityState === 'hidden');
+    if (document.visibilityState !== 'hidden') this.restoreAfterBackground();
+  };
+
+  private setLifecyclePaused(paused: boolean): void {
+    if (this.closed || this.localLifecyclePaused === paused) return;
+    this.localLifecyclePaused = paused;
+    this.send({ type: 'lifecycle-pause', paused });
+    this.runtimeCallbacks.paused?.(this.effectivePause());
+    if (!paused) this.restoreAfterBackground();
+  }
+
+  private restoreAfterBackground(): void {
+    if (this.closed || this.localLifecyclePaused) return;
+    this.lastMessageAt = performance.now();
+    this.lastGameplayMessageAt = this.lastMessageAt;
+    this.send({ type: 'lifecycle-pause', paused: false });
+    if (this.role === 'host') void this.pollOffers();
+    const peer = this.peer;
+    if (!peer && this.role === 'host' && !this.started) return;
+    if (!peer || peer.connectionState === 'failed' || peer.connectionState === 'closed') {
+      this.beginReconnectGrace('The multiplayer connection failed after the page resumed.');
+    } else if (peer.connectionState === 'disconnected') {
+      this.beginReconnectGrace('The multiplayer connection was lost while the page was backgrounded.');
+    } else {
+      this.markConnected(true);
+    }
+  }
+
+  private async loadIceServers(): Promise<void> {
+    try {
+      const response = await request<{ iceServers?: RTCIceServer[] }>('/api/ice-servers');
+      if (Array.isArray(response.iceServers) && response.iceServers.length > 0) {
+        this.iceServers = response.iceServers;
+      }
+    } catch {
+      this.iceServers = DEFAULT_ICE_SERVERS;
+    }
+  }
+
+  private effectivePause(): boolean {
+    return this.localPaused || this.remotePaused || this.localLifecyclePaused || this.remoteLifecyclePaused;
   }
 }
 
@@ -1067,6 +1212,6 @@ function normalizeLobbyAim(value: number): number {
   return ((value + Math.PI) % fullTurn + fullTurn) % fullTurn - Math.PI;
 }
 
-function messageFromError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }

@@ -53,7 +53,9 @@ export interface DuoRoomAuthorization {
 }
 
 const ROOM_TTL_MS = 30 * 60 * 1000;
-const HOST_POLL_TIMEOUT_MS = 15 * 1000;
+// Browser timers can be suspended for a while when a mobile app is backgrounded.
+// Keep the room long enough for pageshow/visibility restoration to refresh it.
+const HOST_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const HOST_POLL_PERSIST_INTERVAL_MS = 10 * 1000;
 const MAX_ACTIVE_ROOMS = 256;
 const MAX_SIGNALING_OBJECT_BYTES = 128 * 1024;
@@ -152,6 +154,22 @@ export class PrivateRoomStore {
       return failure(400, 'Invalid offer.');
     }
     if (!isRecord(offer)) return failure(400, 'Invalid offer.');
+    const existing = room.offers.get(peerId);
+    if (existing) {
+      // A response can be lost after an offer and answer were stored. Preserve
+      // that answer when the guest retries the exact same SDP.
+      if (JSON.stringify(existing.offer) === JSON.stringify(offer)) {
+        return { ok: true, value: null };
+      }
+      // Replacing the same peer's SDP permits a clean peer fallback after an
+      // unrecoverable ICE restart without admitting a second guest.
+      room.offers.set(peerId, { peerId, callsign: callsign.trim(), offer });
+      room.answers.delete(peerId);
+      room.restartOffer = undefined;
+      room.restartAnswer = undefined;
+      this.queueSave();
+      return { ok: true, value: null };
+    }
     if (room.offers.size > 0) return failure(409, 'This room already has a player.');
     room.guestPlayerId = guestPlayerId;
     room.guestCallsign = callsign.trim();

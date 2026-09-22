@@ -8,6 +8,8 @@ services:
       DATA_DIR: "/data"
       TRUST_PROXY: "${TRUST_PROXY:-false}"
       SKIN_ADMIN_TOKEN: "${SKIN_ADMIN_TOKEN:-}"
+      TURN_URLS: "${TURN_URLS:-}"
+      TURN_SHARED_SECRET: "${TURN_SHARED_SECRET:-}"
       CHANGELOG_REPOSITORY: "AlexanderHeffernan/TheLastLight"
     ports:
       - "127.0.0.1:${HOST_PORT:-3011}:3000"
@@ -15,6 +17,26 @@ services:
       - the-last-light-data:/data
     labels:
       com.centurylinklabs.watchtower.enable: "true"
+
+  coturn:
+    image: coturn/coturn:4.6.3-r3-alpine
+    profiles: ["turn"]
+    restart: unless-stopped
+    environment:
+      TURN_SHARED_SECRET: "${TURN_SHARED_SECRET:-}"
+      TURN_REALM: "${TURN_REALM:-the-last-light}"
+      TURN_EXTERNAL_IP: "${TURN_EXTERNAL_IP:-}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        exec turnserver --no-cli --fingerprint --use-auth-secret
+        --static-auth-secret="$${TURN_SHARED_SECRET}" --realm="$${TURN_REALM}"
+        --external-ip="$${TURN_EXTERNAL_IP}" --listening-port=3478
+        --min-port=49160 --max-port=49200 --no-multicast-peers
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "49160-49200:49160-49200/udp"
 
 volumes:
   the-last-light-data:

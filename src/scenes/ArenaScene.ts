@@ -662,6 +662,7 @@ export class ArenaScene extends Phaser.Scene {
         this.remoteInput = sanitizeDuoInput(input);
       },
       ready: () => this.beginDuoSimulation(),
+      paused: (paused) => this.setNetworkPaused(paused),
     });
   }
 
@@ -809,7 +810,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private setNetworkPaused(paused: boolean): void {
-    if (!this.isNetworkClient) return;
+    if (!this.isDuo) return;
     this.networkPaused = paused;
     this.audio.setPaused(paused);
     this.pauseMenu?.setVisible(paused);

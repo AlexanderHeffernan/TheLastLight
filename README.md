@@ -98,12 +98,28 @@ docker compose down
 | `DATA_DIR` | `/data` | Persistent scores, callsign claims, special skin access, and private-room recovery state |
 | `TRUST_PROXY` | `false` | Trust `CF-Connecting-IP`/`X-Forwarded-For` only when the server is behind a trusted reverse proxy |
 | `SKIN_ADMIN_TOKEN` | unset | Bearer token for the protected special-skin access management endpoint |
+| `TURN_URLS` | unset | Comma-separated public self-hosted TURN URLs, for example `turn:game.example.com:3478?transport=udp,turn:game.example.com:3478?transport=tcp` |
+| `TURN_SHARED_SECRET` | unset | Secret shared by the app server and coturn to mint short-lived TURN credentials; never expose this value in client configuration |
+| `TURN_REALM` | `the-last-light` | Authentication realm used by the optional coturn service |
+| `TURN_EXTERNAL_IP` | unset | Public IP advertised by coturn when it is behind NAT |
 | `CHANGELOG_REPOSITORY` | `AlexanderHeffernan/TheLastLight` | Repository queried for recent changes |
 | `GITHUB_TOKEN` | unset | Optional token for higher GitHub API limits |
 | `BUILD_TIMESTAMP` | startup time | Millisecond build time shown on the menu |
 | `LAST_UPDATE` | unset | Explicit ISO update time override |
 
 See [`.env.example`](.env.example) for a local template.
+
+### Optional self-hosted TURN relay
+
+Direct STUN connections remain the default. To relay duo traffic for restrictive networks, point a public DNS name at the Docker host, forward TCP/UDP 3478 and UDP 49160–49200 through its firewall/router, and set `TURN_URLS`, `TURN_EXTERNAL_IP`, and a long random `TURN_SHARED_SECRET`. Then start the optional profile:
+
+```sh
+docker compose --profile turn up -d
+```
+
+The app server uses the shared secret to issue one-hour coturn REST credentials from `/api/ice-servers`; the secret itself is never built into or returned to the browser. The included service is plain TURN on 3478. Production operators may additionally terminate TURN/TLS on 5349 with their own coturn certificate configuration.
+
+Cloudflare's standard HTTP Tunnel does **not** proxy arbitrary TURN UDP or the relay port range. The web app may remain behind a Cloudflare Tunnel, but coturn must be independently reachable on a public IP (or through a separately purchased/configured Cloudflare Spectrum product). If those ports cannot be exposed, leave TURN unset and the game continues using direct STUN only.
 
 ### Manage special skin access
 
