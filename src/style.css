@@ -1084,7 +1084,7 @@ button { border-radius: 0; }
 .mobile-controls { display: none; }
 .mobile-controls[hidden] { display: none !important; }
 
-@media (pointer: coarse) {
+@media (pointer: coarse) and (hover: none) and (any-hover: none) {
   .mobile-controls {
     position: absolute;
     z-index: 3;
@@ -1185,6 +1185,14 @@ button { border-radius: 0; }
   .mobile-action:disabled { opacity: 0.3; }
 }
 
+/* The browser media query can be touch-first even when the app selected its
+   desktop input path (notably in Brave on Windows). Keep the overlay hidden
+   whenever JavaScript has classified the device as desktop. */
+html:not(.touch-controls-available) .mobile-controls {
+  display: none !important;
+  pointer-events: none;
+}
+
 .scanlines,
 .vignette {
   position: absolute;
@@ -1201,7 +1209,7 @@ button { border-radius: 0; }
 
 .orientation-notice { display: none; }
 
-@media (max-width: 720px), (pointer: coarse) {
+@media (max-width: 720px) {
   .home-title {
     top: calc(5vh + env(safe-area-inset-top));
     left: calc(24px + env(safe-area-inset-left));
@@ -1288,7 +1296,7 @@ button { border-radius: 0; }
   .changelog-row { grid-template-columns: 55px 1fr 55px; gap: 8px; font-size: 11px; }
 }
 
-@media (pointer: coarse) and (orientation: landscape) {
+@media (max-height: 720px) and (orientation: landscape) {
   .game-shell {
     inset: 0;
     margin: 0;
@@ -1303,7 +1311,15 @@ button { border-radius: 0; }
   }
 }
 
-@media (max-width: 720px) and (orientation: portrait), (pointer: coarse) and (orientation: portrait) {
+@media (min-width: 721px) {
+  html:not(.touch-controls-available) #game {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: auto;
+  }
+}
+
+@media (max-width: 720px) and (orientation: portrait) {
   .home-credits { justify-self: center; }
 
   .orientation-notice {

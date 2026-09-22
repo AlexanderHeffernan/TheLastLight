@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH, GENERATOR_POSITION } from '../config/constants';
+import { hasTouchControls } from '../config/controls';
 import type { AudioSystem } from './AudioSystem';
 import type { LightingSystem } from './LightingSystem';
 
@@ -21,8 +22,7 @@ export class FlareSystem {
   private readonly rechargeDuration = 45000;
   private readonly firstChargeDuration = 38000;
   private readonly key: Phaser.Input.Keyboard.Key;
-  private readonly touchEnabled = typeof window !== 'undefined'
-    && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  private readonly touchEnabled = hasTouchControls();
   private readonly inventoryText: Phaser.GameObjects.Text;
   private readonly chargeText: Phaser.GameObjects.Text;
   private charges = 0;

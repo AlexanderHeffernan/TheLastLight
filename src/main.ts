@@ -81,7 +81,7 @@ const homeScreen = new HomeScreen({
     }
     showOrientationNoticeBriefly();
     requestLandscapeLock();
-    removeMobileControls ??= installMobileControls();
+    if (hasTouchControls()) removeMobileControls ??= installMobileControls();
     game ??= new Phaser.Game(gameConfig);
     installMobileRotationSupport(game);
     refreshGameViewport();
