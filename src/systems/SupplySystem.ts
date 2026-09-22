@@ -3,6 +3,8 @@ import Phaser from 'phaser';
 interface SupplyHooks {
   getHealth: () => number;
   heal: (amount: number) => void;
+  getFlareCharges: () => number;
+  addFlare: () => boolean;
   needsRepair: () => boolean;
   getBaseIntegrity: () => number;
   repairOutpost: () => void;
@@ -15,7 +17,7 @@ interface SupplyHooks {
 }
 
 type DropState = 'waiting' | 'descending' | 'ready' | 'opened';
-type PickupKind = 'medkit' | 'adrenaline' | 'repair';
+type PickupKind = 'medkit' | 'flare' | 'repair';
 
 export class SupplySystem {
   private readonly pickups: Phaser.Physics.Arcade.Group;
@@ -24,8 +26,6 @@ export class SupplySystem {
   private readonly landingLabel: Phaser.GameObjects.Text;
   private readonly prompt: Phaser.GameObjects.Text;
   private state: DropState = 'waiting';
-  private readonly adrenalineUntil = new Map<Phaser.Physics.Arcade.Sprite, number>();
-  private readonly players: Phaser.Physics.Arcade.Sprite[];
   private cache?: Phaser.GameObjects.Image;
   private cacheShadow?: Phaser.GameObjects.Ellipse;
   private cacheBeaconGlow?: Phaser.GameObjects.Image;
@@ -40,7 +40,6 @@ export class SupplySystem {
     private readonly player: Phaser.Physics.Arcade.Sprite,
     private readonly hooks: SupplyHooks,
   ) {
-    this.players = [player];
     this.interactKey = scene.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E);
     this.pickups = scene.physics.add.group();
     scene.physics.add.overlap(player, this.pickups, (collector, pickup) => {
@@ -82,7 +81,6 @@ export class SupplySystem {
   }
 
   addPlayer(player: Phaser.Physics.Arcade.Sprite): void {
-    this.players.push(player);
     this.scene.physics.add.overlap(
       player,
       this.pickups,
@@ -122,7 +120,7 @@ export class SupplySystem {
     };
   }
 
-  update(time: number): void {
+  update(_time: number, allowKeyboardInteract = true): void {
     if (this.hooks.isGameOver()) {
       this.prompt.setVisible(false);
       return;
@@ -130,24 +128,7 @@ export class SupplySystem {
 
     const canOpen = this.canInteract();
     this.prompt.setVisible(canOpen);
-    if (canOpen && Phaser.Input.Keyboard.JustDown(this.interactKey)) this.interact();
-
-    this.players.forEach((player) => {
-      if (time < (this.adrenalineUntil.get(player) ?? 0)) player.setTint(0xffd18a);
-      else if (player.tintTopLeft === 0xffd18a) player.clearTint();
-    });
-  }
-
-  movementMultiplier(time: number, player = this.player): number {
-    return time < (this.adrenalineUntil.get(player) ?? 0) ? 1.22 : 1;
-  }
-
-  fireInterval(time: number, player = this.player): number {
-    return time < (this.adrenalineUntil.get(player) ?? 0) ? 78 : 105;
-  }
-
-  adrenalineRemaining(time: number, player = this.player): number {
-    return Math.max(0, (this.adrenalineUntil.get(player) ?? 0) - time);
+    if (allowKeyboardInteract && canOpen && Phaser.Input.Keyboard.JustDown(this.interactKey)) this.interact();
   }
 
   private beginDrop(): void {
@@ -225,7 +206,7 @@ export class SupplySystem {
       ? 'MEDKIT READY'
       : kind === 'repair'
         ? 'REPAIR KIT READY'
-        : 'ADRENALINE READY');
+        : 'FLARE CARTRIDGE');
     this.spawnPickup(kind, this.cache.x, this.cache.y - 8);
     this.scene.time.delayedCall(28000, () => this.beginDrop());
   }
@@ -234,19 +215,20 @@ export class SupplySystem {
     const health = this.hooks.getHealth();
     const healthUrgency = Phaser.Math.Clamp((40 - health) / 40, 0, 1);
     const baseUrgency = Phaser.Math.Clamp((0.4 - this.hooks.getBaseIntegrity()) / 0.4, 0, 1);
-    const emergency = healthUrgency > 0 || baseUrgency > 0;
+    const noFlares = this.hooks.getFlareCharges() === 0;
     const choices: { kind: PickupKind; weight: number }[] = [];
 
     if (health < 100) choices.push({ kind: 'medkit', weight: 20 + healthUrgency * 100 });
     if (this.hooks.needsRepair()) choices.push({ kind: 'repair', weight: 20 + baseUrgency * 100 });
-    choices.push({ kind: 'adrenaline', weight: 25 + (emergency ? 0 : 35) });
+    choices.push({ kind: 'flare', weight: 20 + (noFlares ? 100 : 0) });
 
+    if (choices.length === 0) return this.hooks.needsRepair() ? 'repair' : 'medkit';
     let roll = Phaser.Math.FloatBetween(0, choices.reduce((total, choice) => total + choice.weight, 0));
     for (const choice of choices) {
       roll -= choice.weight;
       if (roll <= 0) return choice.kind;
     }
-    return 'adrenaline';
+    return choices[choices.length - 1].kind;
   }
 
   private showCacheBeacon(): void {
@@ -358,9 +340,9 @@ export class SupplySystem {
     } else if (kind === 'repair') {
       this.hooks.repairOutpost();
       this.hooks.announce('OUTPOST RESTORED', 'GENERATOR, LIGHTS, AND BARRICADES OPERATIONAL');
-    } else {
-      this.players.forEach((target) => this.adrenalineUntil.set(target, this.scene.time.now + 10000));
-      this.hooks.announce('ADRENALINE ACTIVE', 'MOVEMENT AND FIRE RATE INCREASED');
+    } else if (kind === 'flare') {
+      this.hooks.addFlare();
+      this.hooks.announce('FLARE CARTRIDGE', 'AERIAL FLARE CHARGE ADDED');
     }
     this.clearDrop();
   }

@@ -1000,7 +1000,7 @@ button { border-radius: 0; }
   position: absolute;
   left: 56px;
   width: 115px;
-  height: 41px;
+  height: 48px;
   color: var(--squad-color);
   font-family: "Share Tech Mono", monospace;
   text-rendering: geometricPrecision;
@@ -1010,9 +1010,9 @@ button { border-radius: 0; }
 .squad-hud-portrait-frame {
   position: absolute;
   top: 3px;
-  left: -42px;
-  width: 39px;
-  height: 39px;
+  left: -48px;
+  width: 45px;
+  height: 45px;
   box-sizing: border-box;
   display: grid;
   place-items: center;
@@ -1024,8 +1024,8 @@ button { border-radius: 0; }
 
 .squad-hud-portrait {
   display: block;
-  width: 37px;
-  height: 37px;
+  width: 43px;
+  height: 43px;
   image-rendering: pixelated;
   object-fit: contain;
 }
@@ -1055,7 +1055,7 @@ button { border-radius: 0; }
   top: 21px;
   left: 0;
   width: 115px;
-  height: 6px;
+  height: 9px;
   box-sizing: border-box;
   border: 1px solid var(--squad-color);
   background: rgb(10 11 10 / 0.7);
@@ -1066,13 +1066,46 @@ button { border-radius: 0; }
   top: 1px;
   left: 2px;
   width: calc(100% - 4px);
-  height: 2px;
+  height: 3px;
   background: var(--squad-fill-color);
   transform-origin: left center;
 }
 
+.squad-hud-fire-control-bar {
+  position: absolute;
+  top: 5px;
+  left: 2px;
+  width: calc(100% - 4px);
+  height: 2px;
+  background: #f3cf75;
+  transform-origin: left center;
+  transition: transform 60ms linear, background-color 140ms ease, opacity 140ms ease;
+}
+
+@keyframes squad-fire-control-inbound {
+  0%, 100% { opacity: 0.62; }
+  50% { opacity: 1; }
+}
+
+.squad-hud-row.fire-control-inbound .squad-hud-fire-control-bar {
+  animation: squad-fire-control-inbound 680ms ease-in-out infinite;
+}
+
+@keyframes squad-fire-control-ready {
+  0%, 100% { filter: brightness(1); opacity: 0.58; }
+  50% { filter: brightness(2.4); opacity: 1; }
+}
+
+.squad-hud-row.fire-control-ready .squad-hud-fire-control-bar {
+  animation: squad-fire-control-ready 260ms ease-in-out 5;
+}
+
+.squad-hud-row.fire-control-ready .squad-hud-bar-back {
+  box-shadow: 0 0 5px rgb(255 213 138 / 0.85);
+}
+
 .squad-hud-elims {
-  top: 29px;
+  top: 35px;
   left: 0;
   color: #f2e6d0;
   font-size: 13px;

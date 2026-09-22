@@ -23,7 +23,6 @@ export interface PlayerSnapshot {
   eliminations: number;
   invulnerableUntil: number;
   flareCharges: number;
-  adrenalineMs: number;
   lastProcessedInput?: number;
 }
 
@@ -51,6 +50,16 @@ export interface BulletSnapshot {
   rotation: number;
   ownerId: DuoPlayerId;
   shotSequence?: number;
+  speedMultiplier?: number;
+}
+
+export type FireControlDropState = 'none' | 'descending' | 'ready';
+
+export interface FireControlSnapshot {
+  profileIndex: number;
+  progress: number;
+  requirement: number;
+  dropState: FireControlDropState;
 }
 
 export type DuoEffectKind = 'bullet-impact' | 'blood-hit' | 'blood' | 'blast' | 'sparks' | 'boss-shockwave';
@@ -118,6 +127,9 @@ export type DuoEventType =
   | 'supply-drop'
   | 'supply-ready'
   | 'supply-opened'
+  | 'fire-control-drop'
+  | 'fire-control-ready'
+  | 'fire-control-installed'
   | 'player-hit'
   | 'music-cue'
   | 'sound-effect';
@@ -178,6 +190,7 @@ export interface DuoSnapshot {
   generatorUnstable: boolean;
   supplyStatus: string;
   supply: SupplySnapshot;
+  fireControl: FireControlSnapshot;
   flare?: FlareSnapshot;
 }
 

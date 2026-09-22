@@ -11,6 +11,11 @@ import {
 import { hasTouchControls, isMobilePortraitViewport } from '../config/controls';
 import { AudioSystem, type MusicCue } from '../systems/AudioSystem';
 import { FlareSystem } from '../systems/FlareSystem';
+import {
+  FireControlSystem,
+  type FireControlDropState,
+  type FireControlProfile,
+} from '../systems/FireControlSystem';
 import { LightingSystem, type PlayerLight, type ShadowCaster } from '../systems/LightingSystem';
 import { MonsterAudioSystem, type MonsterType } from '../systems/MonsterAudioSystem';
 import { SupplySystem } from '../systems/SupplySystem';
@@ -68,6 +73,10 @@ const FLOODLIGHT_HITBOX_RADIUS = 9;
 const FLOODLIGHT_HITBOX_OFFSET = 22;
 const PLAYER_SHOT_RECOIL_DISTANCE = 1.4;
 const ENEMY_FACING_EPSILON = 0.5;
+const FIRE_CONTROL_DROP_POSITION = { x: WIDTH / 2, y: HEIGHT / 2 };
+const FIRE_CONTROL_DROP_DURATION = 1050;
+const FIRE_CONTROL_LOSS_DURATION = 900;
+const BULLET_VISUAL_SCALE = 2 / 3;
 
 interface TreeLayers {
   x: number;
@@ -113,6 +122,7 @@ interface SquadHudDom {
   health: HTMLSpanElement;
   healthBack: HTMLDivElement;
   healthBar: HTMLDivElement;
+  fireControlBar: HTMLDivElement;
   eliminations: HTMLSpanElement;
 }
 
@@ -129,6 +139,7 @@ interface PlayerActor {
   youLabel?: Phaser.GameObjects.Text;
   healthBack?: Phaser.GameObjects.Rectangle;
   healthBar?: Phaser.GameObjects.Rectangle;
+  fireControlBar?: Phaser.GameObjects.Rectangle;
   squadDom?: SquadHudDom;
   health: number;
   alive: boolean;
@@ -140,7 +151,6 @@ interface PlayerActor {
   knockbackVelocity: Phaser.Math.Vector2;
   targetLockedUntil: number;
   invulnerableUntil: number;
-  adrenalineUntil: number;
   lastShot: number;
   lastFlare: boolean;
   lastInteract: boolean;
@@ -215,6 +225,7 @@ export class ArenaScene extends Phaser.Scene {
   private monsterAudio!: MonsterAudioSystem;
   private lighting!: LightingSystem;
   private supplies!: SupplySystem;
+  private fireControl!: FireControlSystem;
   private director!: WaveDirector;
   private keys!: Controls;
   private debugText?: Phaser.GameObjects.Text;
@@ -227,7 +238,6 @@ export class ArenaScene extends Phaser.Scene {
   private player!: Phaser.Physics.Arcade.Sprite;
   private playerShadow!: Phaser.GameObjects.Image;
   private playerGlow!: Phaser.GameObjects.Image;
-  private tracers!: Phaser.GameObjects.Graphics;
 
   private healthBack!: Phaser.GameObjects.Rectangle;
   private healthBar!: Phaser.GameObjects.Rectangle;
@@ -242,9 +252,7 @@ export class ArenaScene extends Phaser.Scene {
   private generatorBeaconLight!: Phaser.GameObjects.Arc;
   private generatorMarker!: Phaser.GameObjects.Text;
   private statusVignette!: Phaser.GameObjects.Image;
-  private adrenalineText!: Phaser.GameObjects.Text;
   private leaderboardResultText?: Phaser.GameObjects.Text;
-  private wasAdrenalineActive = false;
   private readonly launchOptions = getGameLaunchOptions();
   private readonly hudPreview = readHudPreview();
   private readonly duoOptions: DuoLaunchOptions | undefined = this.launchOptions.mode === 'duos'
@@ -294,6 +302,12 @@ export class ArenaScene extends Phaser.Scene {
   private networkFlareCartridge?: Phaser.GameObjects.Image;
   private networkFlareCartridgeShadow?: Phaser.GameObjects.Ellipse;
   private networkFlareCartridgeGlow?: Phaser.GameObjects.Image;
+  private fireControlPod?: Phaser.GameObjects.Image;
+  private fireControlPodGlow?: Phaser.GameObjects.Image;
+  private fireControlPodShadow?: Phaser.GameObjects.Ellipse;
+  private fireControlPodRing?: Phaser.GameObjects.Graphics;
+  private fireControlPodLabel?: Phaser.GameObjects.Text;
+  private fireControlPodPrompt?: Phaser.GameObjects.Text;
   private networkEventSequence = 0;
   private networkPausedByConnection = false;
   private waitingForPartner = false;
@@ -301,6 +315,12 @@ export class ArenaScene extends Phaser.Scene {
   private networkWave = 1;
   private squadHudElement?: HTMLElement;
   private squadHudResizeHandler?: () => void;
+  private fireControlResetUntil = 0;
+  private fireControlReadyUntil = 0;
+  private fireControlLastDropState: FireControlDropState = 'none';
+  private fireControlLossFrom = 0;
+  private fireControlLossTo = 0;
+  private fireControlLossStartedAt = -Infinity;
 
   private readonly handleMobileControl = (event: Event): void => {
     const detail = (event as CustomEvent<{
@@ -338,7 +358,7 @@ export class ArenaScene extends Phaser.Scene {
         this.flares.fire(this.currentAimAngle(), this.time.now);
       }
     } else if (!this.isPaused && !this.isGameOver && detail.action === 'interact') {
-      this.supplies.interact();
+      this.interactWithOutpost(this.actor(this.localPlayerId));
     }
   };
 
@@ -416,7 +436,12 @@ export class ArenaScene extends Phaser.Scene {
     this.pausedForPortrait = false;
     this.bloodDecals = [];
     this.corpses = [];
-    this.wasAdrenalineActive = false;
+    this.fireControlResetUntil = 0;
+    this.fireControlReadyUntil = 0;
+    this.fireControlLastDropState = 'none';
+    this.fireControlLossFrom = 0;
+    this.fireControlLossTo = 0;
+    this.fireControlLossStartedAt = -Infinity;
     this.announcementQueue = [];
     this.announcementActive = false;
     this.generatorWearEvent = undefined;
@@ -457,6 +482,12 @@ export class ArenaScene extends Phaser.Scene {
     this.networkFlareCartridge = undefined;
     this.networkFlareCartridgeShadow = undefined;
     this.networkFlareCartridgeGlow = undefined;
+    this.fireControlPod = undefined;
+    this.fireControlPodGlow = undefined;
+    this.fireControlPodShadow = undefined;
+    this.fireControlPodRing = undefined;
+    this.fireControlPodLabel = undefined;
+    this.fireControlPodPrompt = undefined;
     this.networkEventSequence = 0;
     this.networkPausedByConnection = false;
     this.waitingForPartner = this.isDuo && !this.hudPreview;
@@ -553,6 +584,18 @@ export class ArenaScene extends Phaser.Scene {
     this.makeActors();
     this.makeEnvironment();
     this.makeLightingAndAmbience();
+    this.fireControl = new FireControlSystem([...this.playerActors.keys()], {
+      onDropStarted: () => this.startFireControlDrop(),
+      onDropReady: () => {
+        const state = this.fireControl.snapshot();
+        const ratio = state.requirement > 0
+          ? Phaser.Math.Clamp(state.progress / state.requirement, 0, 1)
+          : 1;
+        this.startFireControlLossFade(1, ratio);
+        this.finishFireControlDrop();
+      },
+      onProfileInstalled: (profile) => this.handleFireControlInstalled(profile),
+    });
     this.makeInterface();
     this.applyHudPreview();
     this.bindControls();
@@ -595,6 +638,8 @@ export class ArenaScene extends Phaser.Scene {
         ? Math.min(...[...this.playerActors.values()].map((actor) => actor.health))
         : this.health,
       heal: (amount) => this.healPlayer(amount),
+      getFlareCharges: () => this.flares.chargeCount(),
+      addFlare: () => this.flares.addCharge(),
       needsRepair: () => this.outpostNeedsRepair(),
       getBaseIntegrity: () => this.outpostIntegrity(),
       repairOutpost: () => this.repairOutpost(),
@@ -748,7 +793,25 @@ export class ArenaScene extends Phaser.Scene {
       case 'supply-opened':
         this.showRemoteSupplyPickup(string('kind', 'medkit'), number('x', 585), number('y', 262));
         break;
+      case 'fire-control-drop':
+        this.renderRemoteFireControlDrop(
+          number('x', FIRE_CONTROL_DROP_POSITION.x),
+          number('y', FIRE_CONTROL_DROP_POSITION.y),
+          number('duration', FIRE_CONTROL_DROP_DURATION),
+        );
+        break;
+      case 'fire-control-ready':
+        this.finishRemoteFireControlDrop(
+          number('x', FIRE_CONTROL_DROP_POSITION.x),
+          number('y', FIRE_CONTROL_DROP_POSITION.y),
+        );
+        break;
+      case 'fire-control-installed':
+        this.clearFireControlPod();
+        this.fireControl.applyNetworkProfile(number('profileIndex'));
+        break;
       case 'player-hit': {
+        this.fireControlResetUntil = this.time.now + 480;
         if (string('playerId') !== this.localPlayerId) break;
         const local = this.actor(this.localPlayerId);
         if (local) this.playLocalDamageFeedback(local);
@@ -930,10 +993,7 @@ export class ArenaScene extends Phaser.Scene {
       Phaser.Math.Clamp(input.moveY, -1, 1),
     );
     if (movement.lengthSq() > 1) movement.normalize();
-    const speedMultiplier = this.supplies
-      ? this.supplies.movementMultiplier(time, actor.sprite)
-      : time < actor.adrenalineUntil ? 1.22 : 1;
-    const moveSpeed = PLAYER_SPEED * speedMultiplier;
+    const moveSpeed = PLAYER_SPEED;
     const body = actor.sprite.body as Phaser.Physics.Arcade.Body;
     if (time < actor.knockbackUntil) {
       const remaining = actor.knockbackDuration > 0
@@ -969,21 +1029,57 @@ export class ArenaScene extends Phaser.Scene {
       .setVisible(this.isDuo && actor.id !== this.localPlayerId);
     actor.youLabel?.setPosition(labelX, labelY);
     const barRotation = actor.sprite.rotation;
-    actor.healthBack?.setPosition(healthBackX, healthBackY).setRotation(barRotation);
     const healthRatio = Phaser.Math.Clamp(actor.health / 100, 0, 1);
+    const fireControlState = this.fireControl.snapshot();
+    const fireControlActualRatio = fireControlState.requirement > 0
+      ? Phaser.Math.Clamp(fireControlState.progress / fireControlState.requirement, 0, 1)
+      : 1;
+    const fireControlRatio = this.displayedFireControlRatio(fireControlActualRatio);
+    const fireControlReset = this.time.now < this.fireControlResetUntil;
+    const fireControlInbound = fireControlState.dropState !== 'none';
+    const fireControlReady = !fireControlReset
+      && fireControlState.dropState === 'ready'
+      && this.time.now < this.fireControlReadyUntil;
+    actor.healthBack?.setPosition(healthBackX, healthBackY)
+      .setRotation(barRotation)
+      .setStrokeStyle(
+        1,
+        fireControlReset ? 0xff5f37 : fireControlReady ? 0xffd58a : actor.color,
+        fireControlReady ? 0.95 : 0.65,
+      );
     const fillStartX = healthBackX - Math.cos(barRotation) * 17;
     const fillStartY = healthBackY - Math.sin(barRotation) * 17;
+    const perpendicularX = -Math.sin(barRotation);
+    const perpendicularY = Math.cos(barRotation);
     actor.healthBar
       ?.setPosition(
-        fillStartX,
-        fillStartY,
+        fillStartX + perpendicularX * -1.3,
+        fillStartY + perpendicularY * -1.3,
       )
       .setRotation(barRotation)
       .setScale(healthRatio, 1)
       .setFillStyle(actor.health <= 35 ? 0xd4513f : actor.color, actor.alive ? 0.9 : 0.35);
+    actor.fireControlBar
+      ?.setPosition(
+        fillStartX + perpendicularX * 1.1,
+        fillStartY + perpendicularY * 1.1,
+      )
+      .setRotation(barRotation)
+      .setScale(fireControlRatio, 1)
+      .setFillStyle(
+        fireControlReset ? 0xff5f37 : fireControlReady ? 0xffe6ad68 : this.fireControl.profile().color,
+        actor.alive
+          ? fireControlReady
+            ? 0.55 + (Math.sin(this.time.now * 0.024) + 1) * 0.225
+            : fireControlInbound
+              ? 0.58 + (Math.sin(this.time.now * 0.009) + 1) * 0.16
+              : 0.76
+          : 0.25,
+      );
     actor.sprite.setAlpha(actor.alive ? 1 : 0.44);
     if (!actor.alive) actor.sprite.setTint(0x6f5550);
     this.updateSquadHud(actor);
+    this.updateFireControlMeters();
   }
 
   private updateSquadHud(actor: PlayerActor): void {
@@ -1062,7 +1158,7 @@ export class ArenaScene extends Phaser.Scene {
     if (snapshot) this.applySnapshot(snapshot);
     const input = this.localDuoInput(time);
     this.updateActorMotion(actor, input, time);
-    const fireInterval = time < actor.adrenalineUntil ? 78 : 105;
+    const fireInterval = this.fireInterval();
     if (actor.alive && input.firing && time - actor.lastShot >= fireInterval) {
       actor.lastShot = time;
       this.shootForActor(actor, input.aim, time, true, input.sequence);
@@ -1081,7 +1177,6 @@ export class ArenaScene extends Phaser.Scene {
     this.waveText.setText(this.waitingForPartner
       ? 'WAITING FOR HOST TO BEGIN...'
       : `THREAT ${String(this.networkWave ?? 1).padStart(2, '0')}`);
-    this.tracers.clear().lineStyle(2, 0xffd66f, 0.7);
     this.lighting.lowHealthShade.setAlpha(actor.health <= 35 && actor.alive
       ? 0.035 + Math.sin(time * 0.006) * 0.025
       : 0);
@@ -1127,12 +1222,6 @@ export class ArenaScene extends Phaser.Scene {
         }
       }
       bullet.getData('glow')?.setPosition(bullet.x, bullet.y);
-      this.tracers.lineBetween(
-        bullet.x - Math.cos(bullet.rotation) * 24,
-        bullet.y - Math.sin(bullet.rotation) * 24,
-        bullet.x,
-        bullet.y,
-      );
       const predicted = bullet.getData('predicted') === true;
       const createdAt = Number(bullet.getData('createdAt') ?? time);
       if (
@@ -1151,7 +1240,9 @@ export class ArenaScene extends Phaser.Scene {
     this.predictedImpacts = this.predictedImpacts.filter((impact) => time - impact.at < 260);
     this.bullets.children.iterate((bullet) => {
       if (!bullet?.active || bullet.getData('predicted') !== true) return;
+      const piercedZombieIds = (bullet.getData('piercedZombieIds') ?? []) as string[];
       const zombie = this.zombies.getChildren().find((candidate) => candidate.active
+        && !piercedZombieIds.includes(String(candidate.getData('networkId') ?? ''))
         && Phaser.Math.Distance.Between(bullet.x, bullet.y, candidate.x, candidate.y)
           <= (candidate.getData('bossKind') ? 31 : 20));
       if (zombie) {
@@ -1161,7 +1252,21 @@ export class ArenaScene extends Phaser.Scene {
         this.makeBlood(bullet.x, bullet.y, impactAngle, zombie.getData('bossKind') ? 4 : 2);
         zombie.setTintFill(0xf0d6ae);
         this.time.delayedCall(55, () => zombie.active && zombie.setTint(zombie.getData('tint') ?? 0xffffff));
-        this.destroyBullet(bullet);
+        const canPierce = Number(bullet.getData('piercesRemaining') ?? 0) > 0
+          && this.canBulletPierceZombie(zombie);
+        if (canPierce) {
+          bullet.setData({
+            piercesRemaining: Number(bullet.getData('piercesRemaining')) - 1,
+            piercedZombieIds: [...piercedZombieIds, String(zombie.getData('networkId') ?? '')],
+          });
+          bullet.setPosition(
+            bullet.x + Math.cos(impactAngle) * 14,
+            bullet.y + Math.sin(impactAngle) * 14,
+          );
+          bullet.body.updateFromGameObject();
+        } else {
+          this.destroyBullet(bullet);
+        }
         return;
       }
       const prop = [...this.solidProps.getChildren(), ...this.barrels.getChildren()].find((candidate) => {
@@ -1188,12 +1293,12 @@ export class ArenaScene extends Phaser.Scene {
     if (!actor || !this.isDuo || this.isNetworkClient) return;
     this.updateActorMotion(actor, this.remoteInput, time);
     if (actor.alive && this.remoteInput.firing
-      && time - actor.lastShot >= this.supplies.fireInterval(time, actor.sprite)) {
+      && time - actor.lastShot >= this.fireInterval()) {
       actor.lastShot = time;
       this.shootForActor(actor, actor.aim, time, false, this.remoteInput.sequence);
     }
     if (actor.alive && this.remoteInput.flare && !actor.lastFlare) this.flares.launch(actor.aim, time, actor.sprite);
-    if (actor.alive && this.remoteInput.interact && !actor.lastInteract) this.supplies.interact(actor.sprite);
+    if (actor.alive && this.remoteInput.interact && !actor.lastInteract) this.interactWithOutpost(actor);
     actor.lastFlare = this.remoteInput.flare;
     actor.lastInteract = this.remoteInput.interact;
   }
@@ -1220,7 +1325,6 @@ export class ArenaScene extends Phaser.Scene {
       eliminations: actor.eliminations,
       invulnerableUntil: actor.invulnerableUntil,
       flareCharges: this.flares?.chargeCount() ?? actor.flareCharges,
-      adrenalineMs: this.supplies?.adrenalineRemaining(time, actor.sprite) ?? 0,
       lastProcessedInput: actor.id === 'guest' ? this.duoOptions?.session.lastProcessedInput : undefined,
     }));
     const zombies: ZombieSnapshot[] = this.zombies.getChildren()
@@ -1250,6 +1354,7 @@ export class ArenaScene extends Phaser.Scene {
         rotation: bullet.rotation,
         ownerId: bullet.getData('ownerId') ?? 'host',
         shotSequence: bullet.getData('shotSequence'),
+        speedMultiplier: bullet.getData('bulletSpeedMultiplier'),
       }));
     const props: PropSnapshot[] = [
       ...this.solidProps.getChildren(),
@@ -1281,6 +1386,7 @@ export class ArenaScene extends Phaser.Scene {
       generatorUnstable: this.lighting.isGeneratorUnstable(),
       supplyStatus: this.generatorMarker?.text ?? '',
       supply: this.supplies?.networkState() ?? { state: 'waiting' },
+      fireControl: this.fireControl.snapshot(),
       flare: this.lighting.networkFlareState(),
     };
   }
@@ -1307,6 +1413,31 @@ export class ArenaScene extends Phaser.Scene {
     this.score = snapshot.score;
     this.networkWave = snapshot.wave;
     this.waitingForPartner = snapshot.waitingForPartner;
+    const previousFireControl = this.fireControl.snapshot();
+    this.fireControl.applyNetworkSnapshot(snapshot.fireControl);
+    const currentFireControl = this.fireControl.snapshot();
+    if (currentFireControl.profileIndex === previousFireControl.profileIndex
+      && currentFireControl.progress < previousFireControl.progress) {
+      const previousRatio = previousFireControl.requirement > 0
+        ? Phaser.Math.Clamp(previousFireControl.progress / previousFireControl.requirement, 0, 1)
+        : 1;
+      const currentRatio = currentFireControl.requirement > 0
+        ? Phaser.Math.Clamp(currentFireControl.progress / currentFireControl.requirement, 0, 1)
+        : 1;
+      this.startFireControlLossFade(previousRatio, currentRatio);
+    }
+    if (this.isNetworkClient) {
+      if (previousFireControl.dropState === 'none' && currentFireControl.dropState === 'descending') {
+        this.renderRemoteFireControlDrop(
+          FIRE_CONTROL_DROP_POSITION.x,
+          FIRE_CONTROL_DROP_POSITION.y,
+          FIRE_CONTROL_DROP_DURATION,
+        );
+      } else if (previousFireControl.dropState !== 'ready' && currentFireControl.dropState === 'ready') {
+        this.finishRemoteFireControlDrop(FIRE_CONTROL_DROP_POSITION.x, FIRE_CONTROL_DROP_POSITION.y);
+      }
+      if (previousFireControl.profileIndex !== currentFireControl.profileIndex) this.clearFireControlPod();
+    }
     if (snapshot.paused !== this.networkPaused) this.setNetworkPaused(snapshot.paused);
     snapshot.players.forEach((player) => {
       const actor = this.actor(player.id);
@@ -1357,7 +1488,6 @@ export class ArenaScene extends Phaser.Scene {
       actor.eliminations = player.eliminations ?? 0;
       actor.invulnerableUntil = player.invulnerableUntil;
       actor.flareCharges = player.flareCharges;
-      actor.adrenalineUntil = this.time.now + Math.max(0, player.adrenalineMs ?? 0);
       if (player.id === this.localPlayerId) {
         this.networkFlareInventory?.setText(`FLARES  ${player.flareCharges} READY  •  F TO LAUNCH`);
       }
@@ -1592,12 +1722,12 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private createRemoteBullet(snapshot: BulletSnapshot): any {
-    const bullet = this.bullets.get(snapshot.x, snapshot.y, 'bullet')
-      ?? this.bullets.create(snapshot.x, snapshot.y, 'bullet');
+    const bullet = this.bullets.get(snapshot.x, snapshot.y, 'bullet-tracer')
+      ?? this.bullets.create(snapshot.x, snapshot.y, 'bullet-tracer');
     if (!bullet) return undefined;
     bullet.enableBody(true, snapshot.x, snapshot.y, true, true);
     bullet.body.enable = false;
-    bullet.setDepth(8).setData({
+    bullet.setDepth(8).setScale(BULLET_VISUAL_SCALE).setData({
       networkId: snapshot.id,
       ownerId: snapshot.ownerId,
       shotSequence: snapshot.shotSequence,
@@ -1606,10 +1736,19 @@ export class ArenaScene extends Phaser.Scene {
       networkBaseX: snapshot.x,
       networkBaseY: snapshot.y,
       networkRotation: snapshot.rotation,
-      networkVelocityX: Math.cos(snapshot.rotation) * BULLET_SPEED,
-      networkVelocityY: Math.sin(snapshot.rotation) * BULLET_SPEED,
+      networkVelocityX: Math.cos(snapshot.rotation) * BULLET_SPEED * (snapshot.speedMultiplier ?? this.fireControl.profile().bulletSpeedMultiplier),
+      networkVelocityY: Math.sin(snapshot.rotation) * BULLET_SPEED * (snapshot.speedMultiplier ?? this.fireControl.profile().bulletSpeedMultiplier),
+      bulletSpeedMultiplier: snapshot.speedMultiplier ?? this.fireControl.profile().bulletSpeedMultiplier,
       networkUpdatedAt: performance.now(),
     });
+    bullet.setTint(this.fireControl.profile().color);
+    bullet.getData('glow')?.destroy();
+    bullet.setData('glow', this.add.image(snapshot.x, snapshot.y, 'glow')
+      .setDepth(17)
+      .setScale(0.18 * BULLET_VISUAL_SCALE)
+      .setTint(this.fireControl.profile().color)
+      .setAlpha(0.32)
+      .setBlendMode(Phaser.BlendModes.ADD));
     const owner = this.actor(snapshot.ownerId);
     if (owner) {
       const angle = snapshot.rotation;
@@ -1702,10 +1841,10 @@ export class ArenaScene extends Phaser.Scene {
       this.networkSupplyGlow = undefined;
       return;
     }
-    const texture = pickup.kind === 'repair'
-      ? 'repair-kit'
-      : pickup.kind === 'adrenaline'
-        ? 'adrenaline'
+    const texture = pickup.kind === 'flare'
+      ? 'flare-cartridge'
+      : pickup.kind === 'repair'
+        ? 'repair-kit'
         : 'medkit';
     if (!this.networkSupplyPickup || this.networkSupplyPickup.getData('kind') !== pickup.kind) {
       this.networkSupplyPickup?.destroy();
@@ -1722,6 +1861,131 @@ export class ArenaScene extends Phaser.Scene {
     }
     this.networkSupplyPickup.setPosition(pickup.x, pickup.y);
     this.networkSupplyGlow?.setPosition(pickup.x, pickup.y);
+  }
+
+  private startFireControlDrop(): void {
+    if (this.isGameOver) return;
+    const { x, y } = FIRE_CONTROL_DROP_POSITION;
+    this.emitDuoEvent('fire-control-drop', { x, y, duration: FIRE_CONTROL_DROP_DURATION });
+    this.announce('REMOTE COMMAND // GUN MOD AUTHORIZED', 'ORDNANCE POD INBOUND // CENTRAL BEACON');
+    this.renderRemoteFireControlDrop(x, y, FIRE_CONTROL_DROP_DURATION, true);
+  }
+
+  private finishFireControlDrop(): void {
+    if (this.isGameOver) return;
+    const { x, y } = FIRE_CONTROL_DROP_POSITION;
+    this.emitDuoEvent('fire-control-ready', { x, y });
+    this.finishRemoteFireControlDrop(x, y);
+  }
+
+  private handleFireControlInstalled(profile: FireControlProfile): void {
+    this.clearFireControlPod();
+    this.emitDuoEvent('fire-control-installed', { profileIndex: profile.index });
+    this.announce('GUN MOD INSTALLED', `REMOTE COMMAND // ${profile.description}`);
+    this.cameras.main.flash(180, 255, 92, 36, false);
+    this.tweens.add({ targets: this.statusVignette, alpha: 0.22, duration: 140, yoyo: true });
+  }
+
+  private renderRemoteFireControlDrop(
+    x: number,
+    y: number,
+    duration: number,
+    authoritative = false,
+  ): void {
+    this.clearFireControlPod();
+    const shadow = this.add.ellipse(x, y + 7, 38, 18, 0x000000, 0.36)
+      .setDepth(1)
+      .setScale(0.25);
+    const pod = this.add.image(x - 54, y - 85, 'supply-cache-closed')
+      .setDepth(2)
+      .setScale(1.45)
+      .setAlpha(0);
+    this.fireControlPod = pod;
+    this.fireControlPodShadow = shadow;
+    this.tweens.add({
+      targets: pod,
+      x,
+      y,
+      scale: 1,
+      alpha: 1,
+      duration,
+      ease: 'Quad.in',
+      onUpdate: () => {
+        shadow.setScale(0.25 + pod.scaleX * 0.75);
+      },
+      onComplete: () => {
+        if (!pod.active) return;
+        if (authoritative) this.fireControl.markDropReady();
+      },
+    });
+    this.tweens.add({ targets: shadow, scale: 1, duration, ease: 'Quad.in' });
+  }
+
+  private finishRemoteFireControlDrop(x: number, y: number): void {
+    this.clearFireControlPod();
+    const pod = this.add.image(x, y, 'supply-cache-closed')
+      .setDepth(3)
+      .setScale(1);
+    const glow = this.add.image(x, y, 'glow')
+      .setDepth(16)
+      .setTint(0xd2a45c)
+      .setScale(0.42)
+      .setAlpha(0.42)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    const ring = this.add.graphics({ x, y }).setDepth(2).setAlpha(0.86);
+    ring.lineStyle(2, 0xe3b66e, 0.95).strokeCircle(0, 0, 30);
+    ring.lineStyle(1, 0x9c7848, 0.72).strokeCircle(0, 0, 36);
+    ring.lineBetween(-42, 0, -30, 0).lineBetween(30, 0, 42, 0);
+    ring.lineBetween(0, -42, 0, -30).lineBetween(0, 30, 0, 42);
+    const label = this.add.text(x, y + 43, 'GUN MOD READY', {
+      fontFamily: '"Share Tech Mono", monospace',
+      fontSize: '10px',
+      color: '#f0d6a2',
+      backgroundColor: '#11100be8',
+      padding: { x: 6, y: 3 },
+    }).setOrigin(0.5).setDepth(18);
+    const prompt = this.add.text(x, y - 50, 'E  INSTALL GUN MOD', {
+      fontFamily: '"Share Tech Mono", monospace',
+      fontSize: '12px',
+      color: '#fff0c5',
+      backgroundColor: '#100e09ee',
+      padding: { x: 7, y: 4 },
+    }).setOrigin(0.5).setDepth(40).setVisible(false);
+    this.fireControlPod = pod;
+    this.fireControlPodGlow = glow;
+    this.fireControlPodRing = ring;
+    this.fireControlPodLabel = label;
+    this.fireControlPodPrompt = prompt;
+    this.tweens.add({
+      targets: [glow, ring, label],
+      alpha: { from: 0.58, to: 1 },
+      duration: 760,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.inOut',
+    });
+  }
+
+  private clearFireControlPod(): void {
+    const targets = [
+      this.fireControlPod,
+      this.fireControlPodGlow,
+      this.fireControlPodShadow,
+      this.fireControlPodRing,
+      this.fireControlPodLabel,
+      this.fireControlPodPrompt,
+    ];
+    targets.forEach((target) => {
+      if (!target) return;
+      this.tweens.killTweensOf(target);
+      target.destroy();
+    });
+    this.fireControlPod = undefined;
+    this.fireControlPodGlow = undefined;
+    this.fireControlPodShadow = undefined;
+    this.fireControlPodRing = undefined;
+    this.fireControlPodLabel = undefined;
+    this.fireControlPodPrompt = undefined;
   }
 
   private renderRemoteFlareCartridge(payload: Record<string, unknown>, number: (key: string, fallback?: number) => number): void {
@@ -1834,10 +2098,10 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private showRemoteSupplyPickup(kind: string, x: number, y: number): void {
-    const texture = kind === 'repair'
-      ? 'repair-kit'
-      : kind === 'adrenaline'
-        ? 'adrenaline'
+    const texture = kind === 'flare'
+      ? 'flare-cartridge'
+      : kind === 'repair'
+        ? 'repair-kit'
         : 'medkit';
     this.networkSupplyCache?.setTexture('supply-cache-open');
     this.networkSupplyLabel?.setText(`${kind.toUpperCase()} READY`).setVisible(true);
@@ -2045,13 +2309,9 @@ export class ArenaScene extends Phaser.Scene {
 
   makeTextures() {
     // Generated textures live across scene restarts.
-    if (this.textures.exists('bullet')) return;
+    if (this.textures.exists('glow')) return;
 
     const g = new Phaser.GameObjects.Graphics(this);
-
-    g.fillStyle(0xfff3b0).fillRect(0, 1, 8, 3);
-    g.fillStyle(0xffad32).fillRect(0, 2, 5, 1);
-    g.generateTexture('bullet', 8, 5).clear();
 
     g.fillStyle(0xe9b949).fillRect(0, 0, 4, 2);
     g.generateTexture('casing', 4, 2).clear();
@@ -2215,7 +2475,7 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   makeActors() {
-    this.bullets = this.physics.add.group({ classType: Phaser.Physics.Arcade.Image, maxSize: 80 });
+    this.bullets = this.physics.add.group({ classType: Phaser.Physics.Arcade.Image, maxSize: 220 });
     this.zombies = this.physics.add.group();
 
     const positions: Record<DuoPlayerId, { x: number; y: number }> = {
@@ -2249,7 +2509,6 @@ export class ArenaScene extends Phaser.Scene {
     this.playerShadow = local.shadow;
     this.playerGlow = local.glow;
 
-    this.tracers = this.add.graphics().setDepth(18).setBlendMode(Phaser.BlendModes.ADD);
   }
 
   private createPlayerActor(
@@ -2298,7 +2557,6 @@ export class ArenaScene extends Phaser.Scene {
       knockbackVelocity: new Phaser.Math.Vector2(),
       targetLockedUntil: 0,
       invulnerableUntil: 0,
-      adrenalineUntil: 0,
       lastShot: -Infinity,
       lastFlare: false,
       lastInteract: false,
@@ -2709,7 +2967,7 @@ export class ArenaScene extends Phaser.Scene {
     const row = document.createElement('div');
     row.className = 'squad-hud-row';
     row.dataset.player = actor.id;
-    row.style.top = `${16 + index * 45}px`;
+    row.style.top = `${16 + index * 52}px`;
     row.style.setProperty('--squad-color', `#${actor.color.toString(16).padStart(6, '0')}`);
 
     const portraitFrame = document.createElement('div');
@@ -2728,13 +2986,86 @@ export class ArenaScene extends Phaser.Scene {
     healthBack.className = 'squad-hud-bar-back';
     const healthBar = document.createElement('div');
     healthBar.className = 'squad-hud-bar';
+    const fireControlBar = document.createElement('div');
+    fireControlBar.className = 'squad-hud-fire-control-bar';
     const eliminations = document.createElement('span');
     eliminations.className = 'squad-hud-elims';
 
-    healthBack.append(healthBar);
+    healthBack.append(healthBar, fireControlBar);
     row.append(portraitFrame, name, health, healthBack, eliminations);
     this.squadHudElement.append(row);
-    return { row, portraitFrame, portrait, name, health, healthBack, healthBar, eliminations };
+    return { row, portraitFrame, portrait, name, health, healthBack, healthBar, fireControlBar, eliminations };
+  }
+
+  private updateFireControlMeters(): void {
+    if (!this.fireControl) return;
+    const state = this.fireControl.snapshot();
+    const profile = this.fireControl.profile();
+    const actualProgressRatio = state.requirement > 0
+      ? Phaser.Math.Clamp(state.progress / state.requirement, 0, 1)
+      : 1;
+    const progressRatio = this.displayedFireControlRatio(actualProgressRatio);
+    if (state.dropState !== this.fireControlLastDropState) {
+      if (state.dropState === 'ready') this.fireControlReadyUntil = this.time.now + 1800;
+      this.fireControlLastDropState = state.dropState;
+    }
+    const reset = this.time.now < this.fireControlResetUntil;
+    const inbound = state.dropState !== 'none';
+    const ready = !reset
+      && state.dropState === 'ready'
+      && this.time.now < this.fireControlReadyUntil;
+    const color = `#${(reset ? 0xff5f37 : ready ? 0xffe6ad68 : profile.color).toString(16).padStart(6, '0')}`;
+    this.playerActors.forEach((actor) => {
+      const squadDom = actor.squadDom;
+      if (!squadDom) return;
+      const playerColor = `#${actor.color.toString(16).padStart(6, '0')}`;
+      squadDom.fireControlBar.style.transform = `scaleX(${progressRatio})`;
+      squadDom.fireControlBar.style.backgroundColor = color;
+      squadDom.fireControlBar.style.opacity = actor.alive
+        ? (ready ? '1' : inbound ? '1' : '0.82')
+        : '0.25';
+      squadDom.healthBack.style.borderColor = reset ? '#ff5f37' : ready ? '#ffd58a' : playerColor;
+      squadDom.row.classList.toggle('fire-control-inbound', inbound);
+      squadDom.row.classList.toggle('fire-control-ready', ready);
+      squadDom.row.classList.toggle('fire-control-reset', reset);
+    });
+    const local = this.actor(this.localPlayerId);
+    this.fireControlPodPrompt?.setVisible(state.dropState === 'ready'
+      && !!local?.alive
+      && Phaser.Math.Distance.Between(
+        local.sprite.x,
+        local.sprite.y,
+        FIRE_CONTROL_DROP_POSITION.x,
+        FIRE_CONTROL_DROP_POSITION.y,
+      ) <= 58);
+  }
+
+  private displayedFireControlRatio(actualRatio: number): number {
+    const elapsed = this.time.now - this.fireControlLossStartedAt;
+    if (elapsed < 0 || elapsed >= FIRE_CONTROL_LOSS_DURATION) {
+      if (this.fireControlLossStartedAt !== -Infinity) this.fireControlLossStartedAt = -Infinity;
+      return actualRatio;
+    }
+    const fadingRatio = Phaser.Math.Linear(
+      this.fireControlLossFrom,
+      this.fireControlLossTo,
+      Phaser.Math.Clamp(elapsed / FIRE_CONTROL_LOSS_DURATION, 0, 1),
+    );
+    // Kills made during the loss animation should still show immediately.
+    return Math.max(actualRatio, fadingRatio);
+  }
+
+  private startFireControlLossFade(from: number, to: number): void {
+    const elapsed = this.time.now - this.fireControlLossStartedAt;
+    if (elapsed >= 0 && elapsed < FIRE_CONTROL_LOSS_DURATION) {
+      const currentRatio = this.displayedFireControlRatio(Math.max(from, to));
+      this.fireControlLossFrom = Math.max(this.fireControlLossFrom, currentRatio, from);
+      this.fireControlLossTo = to;
+      return;
+    }
+    this.fireControlLossFrom = from;
+    this.fireControlLossTo = to;
+    this.fireControlLossStartedAt = this.time.now;
   }
 
   makeInterface() {
@@ -2767,12 +3098,15 @@ export class ArenaScene extends Phaser.Scene {
         backgroundColor: '#080b09dc',
         padding: { x: 3, y: 1 },
       }).setOrigin(0.5).setDepth(22).setVisible(this.isDuo && actor.id === this.localPlayerId);
-      actor.healthBack = this.add.rectangle(actor.sprite.x, actor.sprite.y - 36, 38, 6, 0x0a0b0a, 0.58)
+      actor.healthBack = this.add.rectangle(actor.sprite.x, actor.sprite.y - 36, 38, 7, 0x0a0b0a, 0.58)
         .setStrokeStyle(1, actor.color, 0.65)
-        .setDepth(20);
-      actor.healthBar = this.add.rectangle(actor.sprite.x - 17, actor.sprite.y - 36, 34, 2, actor.color, 0.9)
+        .setDepth(27);
+      actor.healthBar = this.add.rectangle(actor.sprite.x - 17, actor.sprite.y - 37.3, 34, 2, actor.color, 0.9)
         .setOrigin(0, 0.5)
-        .setDepth(21);
+        .setDepth(28);
+      actor.fireControlBar = this.add.rectangle(actor.sprite.x - 17, actor.sprite.y - 34.9, 34, 1, this.fireControl.profile().color, 0.76)
+        .setOrigin(0, 0.5)
+        .setDepth(28);
     });
     const localActor = this.playerActors.get(this.localPlayerId) ?? this.playerActors.get('host')!;
     this.healthBack = localActor.healthBack!;
@@ -2828,13 +3162,6 @@ export class ArenaScene extends Phaser.Scene {
       .setTint(0xff642f)
       .setAlpha(0)
       .setBlendMode(Phaser.BlendModes.ADD);
-    this.adrenalineText = this.add.text(WIDTH - 25, 96, '', {
-      ...labelStyle,
-      fontSize: '10px',
-      color: '#ff9b57',
-      backgroundColor: '#160b08cc',
-      padding: { x: 5, y: 2 },
-    }).setOrigin(1, 0).setDepth(31).setVisible(false);
 
     this.waveText = this.add.text(WIDTH / 2, 20, this.isDuo
       ? this.isNetworkClient
@@ -3075,6 +3402,25 @@ export class ArenaScene extends Phaser.Scene {
         interact: this.supplies.canInteract(),
       },
     }));
+  }
+
+  private fireInterval(): number {
+    return this.fireControl.fireInterval(120);
+  }
+
+  private interactWithOutpost(actor: PlayerActor | undefined): void {
+    if (!actor || !actor.alive || this.isGameOver) return;
+    if (this.fireControl.canInteract()
+      && Phaser.Math.Distance.Between(
+        actor.sprite.x,
+        actor.sprite.y,
+        FIRE_CONTROL_DROP_POSITION.x,
+        FIRE_CONTROL_DROP_POSITION.y,
+      ) <= 58) {
+      this.fireControl.installNext();
+      return;
+    }
+    this.supplies?.interact(actor.sprite);
   }
 
   private findAimLaserEndpoint(angle: number, length: number): TouchVector {
@@ -3377,7 +3723,6 @@ export class ArenaScene extends Phaser.Scene {
         return;
       }
       this.updateGuest(time);
-      this.updateStatusEffects(time);
       return;
     }
 
@@ -3396,21 +3741,21 @@ export class ArenaScene extends Phaser.Scene {
     const aim = aimAngle;
     this.updateActorMotion(localActor, { moveX: horizontal, moveY: vertical, aim }, time);
     this.health = localActor.health;
-    this.supplies.update(time);
+    this.supplies.update(time, false);
+    if (Phaser.Input.Keyboard.JustDown(this.keys.interact!)) this.interactWithOutpost(localActor);
     this.flares.update(time, aim);
     this.updateMobileControlState(time);
-    this.updateStatusEffects(time);
     this.updateRemoteActor(time);
     this.playerActors.forEach((actor) => this.updateActorDisplay(actor));
 
     if (localActor.alive && !this.touchEnabled && pointer.isDown
-      && time - this.lastShot >= this.supplies.fireInterval(time, localActor.sprite)) {
+      && time - this.lastShot >= this.fireInterval()) {
       this.lastShot = time;
       this.shootForActor(localActor, aim, time);
     }
     if (this.touchEnabled
       && this.touchAimFiring
-      && time - this.lastShot >= this.supplies.fireInterval(time)) {
+      && time - this.lastShot >= this.fireInterval()) {
       this.shoot(aim, time);
     }
 
@@ -3420,8 +3765,6 @@ export class ArenaScene extends Phaser.Scene {
     this.lighting.lowHealthShade.setAlpha(localActor.health <= 35 && localActor.alive
       ? 0.035 + Math.sin(time * 0.006) * 0.025
       : 0);
-    this.tracers.clear().lineStyle(2, 0xffd66f, 0.7);
-
     this.trees.forEach(({ x, y, canopy }) => {
       const targetAlpha = Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y) < 54 ? 0.34 : 0.96;
       canopy.setAlpha(Phaser.Math.Linear(canopy.alpha, targetAlpha, 0.12));
@@ -3512,12 +3855,6 @@ export class ArenaScene extends Phaser.Scene {
     this.bullets.children.iterate((bullet) => {
       if (bullet?.active) {
         bullet.getData('glow')?.setPosition(bullet.x, bullet.y);
-        this.tracers.lineBetween(
-          bullet.x - Math.cos(bullet.rotation) * 24,
-          bullet.y - Math.sin(bullet.rotation) * 24,
-          bullet.x,
-          bullet.y,
-        );
       }
       if (bullet?.active && (bullet.x < -20 || bullet.x > WIDTH + 20 || bullet.y < -20 || bullet.y > HEIGHT + 20)) {
         this.destroyBullet(bullet);
@@ -4611,40 +4948,27 @@ export class ArenaScene extends Phaser.Scene {
     const soundMetadata = { ownerId: actor.id, shotSequence };
     this.audio.playNoise(0.055, 0.075, 2100, soundPosition, soundMetadata);
     this.audio.playTone(115, 0.065, 0.045, 'square', soundPosition, soundMetadata);
+    const profile = this.fireControl.profile();
+    const shotAngles = [angle];
     // The source art aims due south, with the muzzle on its lower centerline.
     const muzzleDistance = 29;
     const muzzleX = actor.sprite.x + Math.cos(angle) * muzzleDistance;
     const muzzleY = actor.sprite.y + Math.sin(angle) * muzzleDistance;
-    const pointBlankZombie = visualOnly ? undefined : this.findZombieBetweenActor(actor, muzzleX, muzzleY);
-    const bullet = this.bullets.get(muzzleX, muzzleY, 'bullet');
-    if (!bullet) return;
-    bullet.enableBody(true, muzzleX, muzzleY, true, true);
-    bullet.setDepth(8).setRotation(angle).setData({
-      networkId: visualOnly ? `predicted-bullet-${this.predictedNetworkId++}` : `bullet-${this.networkId++}`,
-      ownerId: actor.id,
+    shotAngles.forEach((shotAngle) => this.spawnFireControlBullet(
+      actor,
+      shotAngle,
+      muzzleX,
+      muzzleY,
+      time,
+      visualOnly,
       shotSequence,
-      predicted: visualOnly,
-      createdAt: time,
-    });
-    const bulletBodyWidth = Math.abs(Math.cos(angle)) * 8 + Math.abs(Math.sin(angle)) * 5;
-    const bulletBodyHeight = Math.abs(Math.sin(angle)) * 8 + Math.abs(Math.cos(angle)) * 5;
-    bullet.body.setSize(bulletBodyWidth, bulletBodyHeight, true).setAllowGravity(false);
-    const bulletGlow = this.add.image(muzzleX, muzzleY, 'glow')
-      .setDepth(17)
-      .setScale(0.18)
-      .setTint(0xffc34d)
-      .setAlpha(0.32)
-      .setBlendMode(Phaser.BlendModes.ADD);
-    bullet.setData('glow', bulletGlow);
-    if (pointBlankZombie) {
-      this.hitZombie(bullet, pointBlankZombie);
-    } else {
-      bullet.setVelocity(Math.cos(angle) * BULLET_SPEED, Math.sin(angle) * BULLET_SPEED);
-    }
+      profile,
+    ));
 
     const flash = this.add.image(muzzleX, muzzleY, 'flash')
       .setScale(1.8)
       .setRotation(angle)
+      .setTint(profile.color)
       .setDepth(22)
       .setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({ targets: flash, alpha: 0, scale: 0.2, duration: 75, onComplete: () => flash.destroy() });
@@ -4674,6 +4998,54 @@ export class ArenaScene extends Phaser.Scene {
       -Math.cos(angle) * PLAYER_SHOT_RECOIL_DISTANCE,
       -Math.sin(angle) * PLAYER_SHOT_RECOIL_DISTANCE,
     );
+  }
+
+  private spawnFireControlBullet(
+    actor: PlayerActor,
+    angle: number,
+    muzzleX: number,
+    muzzleY: number,
+    time: number,
+    visualOnly: boolean,
+    shotSequence: number | undefined,
+    profile: FireControlProfile,
+  ): void {
+    const pointBlankZombie = visualOnly
+      ? undefined
+      : this.findZombieBetweenActor(actor, muzzleX, muzzleY);
+    const bullet = this.bullets.get(muzzleX, muzzleY, 'bullet-tracer');
+    if (!bullet) return;
+    bullet.enableBody(true, muzzleX, muzzleY, true, true);
+    bullet.setDepth(8).setScale(BULLET_VISUAL_SCALE).setRotation(angle).setTint(profile.color).setData({
+      networkId: visualOnly ? `predicted-bullet-${this.predictedNetworkId++}` : `bullet-${this.networkId++}`,
+      ownerId: actor.id,
+      shotSequence,
+      predicted: visualOnly,
+      createdAt: time,
+      damageMultiplier: profile.damageMultiplier,
+      impactMultiplier: profile.impactMultiplier,
+      bulletSpeedMultiplier: profile.bulletSpeedMultiplier,
+      piercesRemaining: profile.normalPierces,
+      piercedZombieIds: [],
+    });
+    const bulletBodyWidth = Math.abs(Math.cos(angle)) * 8 + Math.abs(Math.sin(angle)) * 5;
+    const bulletBodyHeight = Math.abs(Math.sin(angle)) * 8 + Math.abs(Math.cos(angle)) * 5;
+    bullet.body.setSize(bulletBodyWidth, bulletBodyHeight, true).setAllowGravity(false);
+    const bulletGlow = this.add.image(muzzleX, muzzleY, 'glow')
+      .setDepth(17)
+      .setScale(0.18 * BULLET_VISUAL_SCALE)
+      .setTint(profile.color)
+      .setAlpha(0.32)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    bullet.setData('glow', bulletGlow);
+    if (pointBlankZombie) {
+      this.hitZombie(bullet, pointBlankZombie);
+    } else {
+      bullet.setVelocity(
+        Math.cos(angle) * BULLET_SPEED * profile.bulletSpeedMultiplier,
+        Math.sin(angle) * BULLET_SPEED * profile.bulletSpeedMultiplier,
+      );
+    }
   }
 
   private findZombieBetweenActor(actor: PlayerActor, x: number, y: number) {
@@ -5171,9 +5543,29 @@ export class ArenaScene extends Phaser.Scene {
     const impactAngle = bullet.rotation;
     const killerId = bullet.getData('ownerId') as DuoPlayerId | undefined;
     const bossKind = zombie.getData('bossKind') as BossKind | undefined;
-    this.destroyBullet(bullet);
+    const zombieId = String(zombie.getData('networkId') ?? '');
+    const piercedZombieIds = (bullet.getData('piercedZombieIds') ?? []) as string[];
+    if (piercedZombieIds.includes(zombieId)) return;
+    const canPierce = Number(bullet.getData('piercesRemaining') ?? 0) > 0
+      && this.canBulletPierceZombie(zombie);
+    const continuePiercing = (): void => {
+      if (!canPierce || !bullet.active) return;
+      bullet.setData({
+        piercesRemaining: Number(bullet.getData('piercesRemaining')) - 1,
+        piercedZombieIds: [...piercedZombieIds, zombieId],
+      });
+      bullet.setPosition(
+        bullet.x + Math.cos(impactAngle) * 14,
+        bullet.y + Math.sin(impactAngle) * 14,
+      );
+      bullet.body.updateFromGameObject();
+    };
+    if (!canPierce) this.destroyBullet(bullet);
     const breakerArmored = bossKind === 'breaker' && zombie.getData('bossState') !== 'recovery';
-    const damage = breakerArmored ? (zombie.getData('phase') === 2 ? 0.85 : 0.5) : 1;
+    const damageMultiplier = Number(bullet.getData('damageMultiplier') ?? 1);
+    const impactMultiplier = Number(bullet.getData('impactMultiplier') ?? 1);
+    const damage = (breakerArmored ? (zombie.getData('phase') === 2 ? 0.85 : 0.5) : 1)
+      * damageMultiplier;
     const health = zombie.getData('health') - damage;
     zombie.setData('health', health);
     if (bossKind) {
@@ -5191,7 +5583,12 @@ export class ArenaScene extends Phaser.Scene {
       620,
       { x: zombie.x, y: zombie.y },
     );
-    this.cameras.main.shake(45, health <= 0 ? (bossKind ? 0.004 : 0.0018) : 0.0008);
+    this.cameras.main.shake(
+      45,
+      health <= 0
+        ? (bossKind ? 0.004 : 0.0018)
+        : 0.0008 * impactMultiplier,
+    );
 
     if (health > 0) {
       if (this.time.now >= zombie.getData('nextPainVoiceAt')) {
@@ -5207,14 +5604,23 @@ export class ArenaScene extends Phaser.Scene {
       }
       zombie.setTintFill(0xf0d6ae);
       if (!bossKind) {
-        zombie.setVelocity(Math.cos(impactAngle) * 130, Math.sin(impactAngle) * 130);
-        zombie.setData('staggerUntil', this.time.now + 85);
+        zombie.setVelocity(
+          Math.cos(impactAngle) * 130 * impactMultiplier,
+          Math.sin(impactAngle) * 130 * impactMultiplier,
+        );
+        zombie.setData('staggerUntil', this.time.now + 85 * impactMultiplier);
       }
       this.time.delayedCall(55, () => zombie.active && zombie.setTint(zombie.getData('tint')));
+      continuePiercing();
       return;
     }
 
     this.killZombie(zombie, impactAngle, killerId);
+    continuePiercing();
+  }
+
+  private canBulletPierceZombie(zombie: any): boolean {
+    return !zombie.getData('bossKind') && zombie.getData('type') !== 'brute';
   }
 
   killZombie(
@@ -5229,11 +5635,13 @@ export class ArenaScene extends Phaser.Scene {
     const bossKind = zombie.getData('bossKind') as BossKind | undefined;
     const baseScale = zombie.getData('baseScale');
     const blastInitiatorId = explosionInitiatorId ?? killerId;
+    const creditedKillerId = killerId ?? explosionInitiatorId;
     const voice = bossKind ? BOSS_DEFINITIONS[bossKind].voice : type as MonsterType;
     this.monsterAudio.play(voice, 'death', x, y, this.player.x, this.player.y);
-    if (killerId) {
-      const killer = this.actor(killerId);
+    if (creditedKillerId) {
+      const killer = this.actor(creditedKillerId);
       if (killer) killer.eliminations += 1;
+      this.fireControl.recordKill(creditedKillerId);
     }
     this.score = this.totalEliminations();
 
@@ -5439,6 +5847,17 @@ export class ArenaScene extends Phaser.Scene {
     if (this.time.now - lastHurt < 470 || this.time.now < actor.invulnerableUntil) return false;
     this.lastHurtByPlayer.set(playerId, this.time.now);
     this.lastHurt = this.time.now;
+    const previousFireControl = this.fireControl.snapshot();
+    this.fireControl.recordDamage(playerId);
+    const currentFireControl = this.fireControl.snapshot();
+    const previousRatio = previousFireControl.requirement > 0
+      ? Phaser.Math.Clamp(previousFireControl.progress / previousFireControl.requirement, 0, 1)
+      : 1;
+    const currentRatio = currentFireControl.requirement > 0
+      ? Phaser.Math.Clamp(currentFireControl.progress / currentFireControl.requirement, 0, 1)
+      : 1;
+    this.startFireControlLossFade(previousRatio, currentRatio);
+    this.fireControlResetUntil = this.time.now + 480;
     actor.health = Math.max(0, actor.health - amount);
     if (playerId === this.localPlayerId) this.health = actor.health;
     this.emitDuoEvent('player-hit', { playerId });
@@ -5500,27 +5919,6 @@ export class ArenaScene extends Phaser.Scene {
       });
       this.cameras.main.flash(110, 126, 220, 142, false);
     }
-  }
-
-  private updateStatusEffects(time: number): void {
-    const local = this.actor(this.localPlayerId);
-    const remaining = this.supplies
-      ? this.supplies.adrenalineRemaining(time, local?.sprite)
-      : Math.max(0, (local?.adrenalineUntil ?? 0) - time);
-    const active = remaining > 0;
-    if (local) {
-      if (active) local.sprite.setTint(0xffd18a);
-      else if (local.sprite.tintTopLeft === 0xffd18a) local.sprite.clearTint();
-    }
-    if (active && !this.wasAdrenalineActive) {
-      this.cameras.main.flash(120, 255, 111, 48, false);
-      this.tweens.add({ targets: this.statusVignette, alpha: 0.2, duration: 160, yoyo: true });
-    }
-    this.wasAdrenalineActive = active;
-    this.statusVignette.setAlpha(active ? 0.075 + Math.sin(time * 0.009) * 0.018 : 0);
-    this.adrenalineText
-      .setVisible(active)
-      .setText(active ? `ADRENALINE  ${(remaining / 1000).toFixed(1)}s` : '');
   }
 
   hurtPlayer(playerSprite, zombie) {

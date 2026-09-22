@@ -89,6 +89,13 @@ export class FlareSystem {
     return this.charges;
   }
 
+  addCharge(): boolean {
+    this.charges += 1;
+    this.unlocked = true;
+    this.refreshHud();
+    return true;
+  }
+
   canFire(time: number): boolean {
     return this.hooks.isPlayerAlive(this.player)
       && !this.hooks.isGameOver()
