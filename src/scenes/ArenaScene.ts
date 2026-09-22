@@ -64,6 +64,8 @@ const PLAYER_COLLISION_OFFSET_X = 20;
 const PLAYER_COLLISION_OFFSET_Y = 9;
 const PLAYER_PIVOT_X = (PLAYER_COLLISION_OFFSET_X + PLAYER_COLLISION_RADIUS) / PLAYER_SPRITE_SIZE;
 const PLAYER_PIVOT_Y = (PLAYER_COLLISION_OFFSET_Y + PLAYER_COLLISION_RADIUS) / PLAYER_SPRITE_SIZE;
+const FLOODLIGHT_HITBOX_RADIUS = 9;
+const FLOODLIGHT_HITBOX_OFFSET = 22;
 const PLAYER_SHOT_RECOIL_DISTANCE = 1.4;
 const ENEMY_FACING_EPSILON = 0.5;
 
@@ -1164,9 +1166,16 @@ export class ArenaScene extends Phaser.Scene {
         this.destroyBullet(bullet);
         return;
       }
-      const prop = [...this.solidProps.getChildren(), ...this.barrels.getChildren()].find((candidate) => candidate.active
-        && !candidate.getData('bulletPassThrough')
-        && Phaser.Math.Distance.Between(bullet.x, bullet.y, candidate.x, candidate.y) <= 23);
+      const prop = [...this.solidProps.getChildren(), ...this.barrels.getChildren()].find((candidate) => {
+        if (!candidate.active || candidate.getData('bulletPassThrough')) return false;
+        if (candidate.getData('kind') === 'floodlight') {
+          const body = candidate.body as Phaser.Physics.Arcade.StaticBody | null;
+          return body?.enable === true
+            && Phaser.Math.Distance.Between(bullet.x, bullet.y, body.center.x, body.center.y)
+              <= body.halfWidth;
+        }
+        return Phaser.Math.Distance.Between(bullet.x, bullet.y, candidate.x, candidate.y) <= 23;
+      });
       if (prop) {
         this.predictedImpacts.push({ x: bullet.x, y: bullet.y, at: time });
         this.playImpactEffect('bullet-impact', bullet.x, bullet.y, bullet.rotation);
@@ -2402,9 +2411,11 @@ export class ArenaScene extends Phaser.Scene {
     this.floodlightPositions.forEach(({ x, y }, index) => {
       const rotation = Phaser.Math.Angle.Between(x, y, WIDTH / 2, HEIGHT / 2) + Math.PI / 2;
       const floodlight = addSolid(x, y, 'floodlight', 18, 18, rotation, 3);
-      const bodyX = x + Math.sin(rotation) * 7;
-      const bodyY = y - Math.cos(rotation) * 7;
-      floodlight.body.setCircle(9, 0, 0);
+      // The 18px circle should sit over the lamp head, whose centre is
+      // 22px above the centred 64px sprite pivot.
+      const bodyX = x + Math.sin(rotation) * FLOODLIGHT_HITBOX_OFFSET;
+      const bodyY = y - Math.cos(rotation) * FLOODLIGHT_HITBOX_OFFSET;
+      floodlight.body.setCircle(FLOODLIGHT_HITBOX_RADIUS, 0, 0);
       this.centerStaticBody(floodlight.body, bodyX, bodyY);
       floodlight.setData({ kind: 'floodlight', lightIndex: index });
     });
