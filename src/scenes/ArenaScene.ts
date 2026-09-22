@@ -12,6 +12,7 @@ import { hasTouchControls, isMobilePortraitViewport } from '../config/controls';
 import { AudioSystem, type MusicCue } from '../systems/AudioSystem';
 import { FlareSystem } from '../systems/FlareSystem';
 import {
+  FIRE_CONTROL_BOSS_KILL_VALUE,
   FireControlSystem,
   type FireControlDropState,
   type FireControlProfile,
@@ -315,12 +316,14 @@ export class ArenaScene extends Phaser.Scene {
   private networkWave = 1;
   private squadHudElement?: HTMLElement;
   private squadHudResizeHandler?: () => void;
-  private fireControlResetUntil = 0;
+  private fireControlResetUntil = new Map<DuoPlayerId, number>();
   private fireControlReadyUntil = 0;
   private fireControlLastDropState: FireControlDropState = 'none';
-  private fireControlLossFrom = 0;
-  private fireControlLossTo = 0;
-  private fireControlLossStartedAt = -Infinity;
+  private fireControlLossFades = new Map<DuoPlayerId, {
+    from: number;
+    to: number;
+    startedAt: number;
+  }>();
 
   private readonly handleMobileControl = (event: Event): void => {
     const detail = (event as CustomEvent<{
@@ -436,12 +439,10 @@ export class ArenaScene extends Phaser.Scene {
     this.pausedForPortrait = false;
     this.bloodDecals = [];
     this.corpses = [];
-    this.fireControlResetUntil = 0;
+    this.fireControlResetUntil.clear();
     this.fireControlReadyUntil = 0;
     this.fireControlLastDropState = 'none';
-    this.fireControlLossFrom = 0;
-    this.fireControlLossTo = 0;
-    this.fireControlLossStartedAt = -Infinity;
+    this.fireControlLossFades.clear();
     this.announcementQueue = [];
     this.announcementActive = false;
     this.generatorWearEvent = undefined;
@@ -585,13 +586,19 @@ export class ArenaScene extends Phaser.Scene {
     this.makeEnvironment();
     this.makeLightingAndAmbience();
     this.fireControl = new FireControlSystem([...this.playerActors.keys()], {
+      onProgressReset: (previousProgressByPlayer) => {
+        const requirement = this.fireControl.requirement();
+        this.playerActors.forEach((actor) => {
+          const previousProgress = Number(previousProgressByPlayer[actor.id] ?? 0);
+          const previousRatio = requirement > 0
+            ? Phaser.Math.Clamp(previousProgress / requirement, 0, 1)
+            : 1;
+          this.startFireControlLossFade(actor.id, previousRatio, 0);
+          this.fireControlResetUntil.set(actor.id, this.time.now + 480);
+        });
+      },
       onDropStarted: () => this.startFireControlDrop(),
       onDropReady: () => {
-        const state = this.fireControl.snapshot();
-        const ratio = state.requirement > 0
-          ? Phaser.Math.Clamp(state.progress / state.requirement, 0, 1)
-          : 1;
-        this.startFireControlLossFade(1, ratio);
         this.finishFireControlDrop();
       },
       onProfileInstalled: (profile) => this.handleFireControlInstalled(profile),
@@ -792,6 +799,7 @@ export class ArenaScene extends Phaser.Scene {
         this.showRemoteSupplyPickup(string('kind', 'medkit'), number('x', 585), number('y', 262));
         break;
       case 'fire-control-drop':
+        this.playerActors.forEach((actor) => this.fireControlResetUntil.set(actor.id, this.time.now + 480));
         this.renderRemoteFireControlDrop(
           number('x', FIRE_CONTROL_DROP_POSITION.x),
           number('y', FIRE_CONTROL_DROP_POSITION.y),
@@ -809,8 +817,11 @@ export class ArenaScene extends Phaser.Scene {
         this.fireControl.applyNetworkProfile(number('profileIndex'));
         break;
       case 'player-hit': {
-        this.fireControlResetUntil = this.time.now + 480;
-        if (string('playerId') !== this.localPlayerId) break;
+        const playerId = string('playerId') as DuoPlayerId;
+        if (playerId === 'host' || playerId === 'guest') {
+          this.fireControlResetUntil.set(playerId, this.time.now + 480);
+        }
+        if (playerId !== this.localPlayerId) break;
         const local = this.actor(this.localPlayerId);
         if (local) this.playLocalDamageFeedback(local);
         break;
@@ -1029,11 +1040,12 @@ export class ArenaScene extends Phaser.Scene {
     const barRotation = actor.sprite.rotation;
     const healthRatio = Phaser.Math.Clamp(actor.health / 100, 0, 1);
     const fireControlState = this.fireControl.snapshot();
+    const fireControlProgress = this.fireControl.progress(actor.id);
     const fireControlActualRatio = fireControlState.requirement > 0
-      ? Phaser.Math.Clamp(fireControlState.progress / fireControlState.requirement, 0, 1)
+      ? Phaser.Math.Clamp(fireControlProgress / fireControlState.requirement, 0, 1)
       : 1;
-    const fireControlRatio = this.displayedFireControlRatio(fireControlActualRatio);
-    const fireControlReset = this.time.now < this.fireControlResetUntil;
+    const fireControlRatio = this.displayedFireControlRatio(actor.id, fireControlActualRatio);
+    const fireControlReset = this.time.now < (this.fireControlResetUntil.get(actor.id) ?? -Infinity);
     const fireControlInbound = fireControlState.dropState !== 'none';
     const fireControlReady = !fireControlReset
       && fireControlState.dropState === 'ready'
@@ -1414,18 +1426,23 @@ export class ArenaScene extends Phaser.Scene {
     const previousFireControl = this.fireControl.snapshot();
     this.fireControl.applyNetworkSnapshot(snapshot.fireControl);
     const currentFireControl = this.fireControl.snapshot();
-    if (currentFireControl.profileIndex === previousFireControl.profileIndex
-      && currentFireControl.progress < previousFireControl.progress) {
-      const previousRatio = previousFireControl.requirement > 0
-        ? Phaser.Math.Clamp(previousFireControl.progress / previousFireControl.requirement, 0, 1)
-        : 1;
-      const currentRatio = currentFireControl.requirement > 0
-        ? Phaser.Math.Clamp(currentFireControl.progress / currentFireControl.requirement, 0, 1)
-        : 1;
-      this.startFireControlLossFade(previousRatio, currentRatio);
+    if (currentFireControl.profileIndex === previousFireControl.profileIndex) {
+      this.playerActors.forEach((actor) => {
+        const previousProgress = Number(previousFireControl.progressByPlayer[actor.id] ?? 0);
+        const currentProgress = Number(currentFireControl.progressByPlayer[actor.id] ?? 0);
+        if (currentProgress >= previousProgress) return;
+        const previousRatio = previousFireControl.requirement > 0
+          ? Phaser.Math.Clamp(previousProgress / previousFireControl.requirement, 0, 1)
+          : 1;
+        const currentRatio = currentFireControl.requirement > 0
+          ? Phaser.Math.Clamp(currentProgress / currentFireControl.requirement, 0, 1)
+          : 1;
+        this.startFireControlLossFade(actor.id, previousRatio, currentRatio);
+      });
     }
     if (this.isNetworkClient) {
       if (previousFireControl.dropState === 'none' && currentFireControl.dropState === 'descending') {
+        this.playerActors.forEach((actor) => this.fireControlResetUntil.set(actor.id, this.time.now + 480));
         this.renderRemoteFireControlDrop(
           FIRE_CONTROL_DROP_POSITION.x,
           FIRE_CONTROL_DROP_POSITION.y,
@@ -2991,23 +3008,27 @@ export class ArenaScene extends Phaser.Scene {
     if (!this.fireControl) return;
     const state = this.fireControl.snapshot();
     const profile = this.fireControl.profile();
-    const actualProgressRatio = state.requirement > 0
-      ? Phaser.Math.Clamp(state.progress / state.requirement, 0, 1)
-      : 1;
-    const progressRatio = this.displayedFireControlRatio(actualProgressRatio);
     if (state.dropState !== this.fireControlLastDropState) {
       if (state.dropState === 'ready') this.fireControlReadyUntil = this.time.now + 1800;
       this.fireControlLastDropState = state.dropState;
     }
-    const reset = this.time.now < this.fireControlResetUntil;
     const inbound = state.dropState !== 'none';
-    const ready = !reset
-      && state.dropState === 'ready'
-      && this.time.now < this.fireControlReadyUntil;
-    const color = `#${(reset ? 0xff5f37 : ready ? 0xffe6ad68 : profile.color).toString(16).padStart(6, '0')}`;
     this.playerActors.forEach((actor) => {
       const squadDom = actor.squadDom;
       if (!squadDom) return;
+      const actualProgressRatio = state.requirement > 0
+        ? Phaser.Math.Clamp(
+          this.fireControl.progress(actor.id) / state.requirement,
+          0,
+          1,
+        )
+        : 1;
+      const progressRatio = this.displayedFireControlRatio(actor.id, actualProgressRatio);
+      const reset = this.time.now < (this.fireControlResetUntil.get(actor.id) ?? -Infinity);
+      const ready = !reset
+        && state.dropState === 'ready'
+        && this.time.now < this.fireControlReadyUntil;
+      const color = `#${(reset ? 0xff5f37 : ready ? 0xffe6ad68 : profile.color).toString(16).padStart(6, '0')}`;
       const playerColor = `#${actor.color.toString(16).padStart(6, '0')}`;
       squadDom.fireControlBar.style.transform = `scaleX(${progressRatio})`;
       squadDom.fireControlBar.style.backgroundColor = color;
@@ -3030,32 +3051,40 @@ export class ArenaScene extends Phaser.Scene {
       ) <= 58);
   }
 
-  private displayedFireControlRatio(actualRatio: number): number {
-    const elapsed = this.time.now - this.fireControlLossStartedAt;
+  private displayedFireControlRatio(playerId: DuoPlayerId, actualRatio: number): number {
+    const fade = this.fireControlLossFades.get(playerId);
+    if (!fade) return actualRatio;
+    const elapsed = this.time.now - fade.startedAt;
     if (elapsed < 0 || elapsed >= FIRE_CONTROL_LOSS_DURATION) {
-      if (this.fireControlLossStartedAt !== -Infinity) this.fireControlLossStartedAt = -Infinity;
+      this.fireControlLossFades.delete(playerId);
       return actualRatio;
     }
     const fadingRatio = Phaser.Math.Linear(
-      this.fireControlLossFrom,
-      this.fireControlLossTo,
+      fade.from,
+      fade.to,
       Phaser.Math.Clamp(elapsed / FIRE_CONTROL_LOSS_DURATION, 0, 1),
     );
     // Kills made during the loss animation should still show immediately.
     return Math.max(actualRatio, fadingRatio);
   }
 
-  private startFireControlLossFade(from: number, to: number): void {
-    const elapsed = this.time.now - this.fireControlLossStartedAt;
-    if (elapsed >= 0 && elapsed < FIRE_CONTROL_LOSS_DURATION) {
-      const currentRatio = this.displayedFireControlRatio(Math.max(from, to));
-      this.fireControlLossFrom = Math.max(this.fireControlLossFrom, currentRatio, from);
-      this.fireControlLossTo = to;
+  private startFireControlLossFade(playerId: DuoPlayerId, from: number, to: number): void {
+    const existing = this.fireControlLossFades.get(playerId);
+    const elapsed = existing ? this.time.now - existing.startedAt : -Infinity;
+    if (existing && elapsed >= 0 && elapsed < FIRE_CONTROL_LOSS_DURATION) {
+      const currentRatio = this.displayedFireControlRatio(playerId, Math.max(from, to));
+      this.fireControlLossFades.set(playerId, {
+        from: Math.max(existing.from, currentRatio, from),
+        to,
+        startedAt: existing.startedAt,
+      });
       return;
     }
-    this.fireControlLossFrom = from;
-    this.fireControlLossTo = to;
-    this.fireControlLossStartedAt = this.time.now;
+    this.fireControlLossFades.set(playerId, {
+      from,
+      to,
+      startedAt: this.time.now,
+    });
   }
 
   makeInterface() {
@@ -5631,7 +5660,10 @@ export class ArenaScene extends Phaser.Scene {
     if (creditedKillerId) {
       const killer = this.actor(creditedKillerId);
       if (killer) killer.eliminations += 1;
-      this.fireControl.recordKill(creditedKillerId);
+      this.fireControl.recordKill(
+        creditedKillerId,
+        bossKind ? FIRE_CONTROL_BOSS_KILL_VALUE : 1,
+      );
     }
     this.score = this.totalEliminations();
 
@@ -5840,14 +5872,16 @@ export class ArenaScene extends Phaser.Scene {
     const previousFireControl = this.fireControl.snapshot();
     this.fireControl.recordDamage(playerId);
     const currentFireControl = this.fireControl.snapshot();
+    const previousProgress = Number(previousFireControl.progressByPlayer[playerId] ?? 0);
+    const currentProgress = Number(currentFireControl.progressByPlayer[playerId] ?? 0);
     const previousRatio = previousFireControl.requirement > 0
-      ? Phaser.Math.Clamp(previousFireControl.progress / previousFireControl.requirement, 0, 1)
+      ? Phaser.Math.Clamp(previousProgress / previousFireControl.requirement, 0, 1)
       : 1;
     const currentRatio = currentFireControl.requirement > 0
-      ? Phaser.Math.Clamp(currentFireControl.progress / currentFireControl.requirement, 0, 1)
+      ? Phaser.Math.Clamp(currentProgress / currentFireControl.requirement, 0, 1)
       : 1;
-    this.startFireControlLossFade(previousRatio, currentRatio);
-    this.fireControlResetUntil = this.time.now + 480;
+    this.startFireControlLossFade(playerId, previousRatio, currentRatio);
+    this.fireControlResetUntil.set(playerId, this.time.now + 480);
     actor.health = Math.max(0, actor.health - amount);
     if (playerId === this.localPlayerId) this.health = actor.health;
     this.emitDuoEvent('player-hit', { playerId });
@@ -6094,9 +6128,28 @@ function readHudPreview(): HudPreview | undefined {
 }
 
 function interpolateDuoSnapshots(left: DuoSnapshot, right: DuoSnapshot, alpha: number): DuoSnapshot {
+  const progressByPlayer = (['host', 'guest'] as DuoPlayerId[]).reduce<Partial<Record<DuoPlayerId, number>>>(
+    (progress, playerId) => {
+      const previous = left.fireControl.progressByPlayer[playerId];
+      const current = right.fireControl.progressByPlayer[playerId];
+      if (previous !== undefined && current !== undefined) {
+        progress[playerId] = lerp(previous, current, alpha);
+      } else if (current !== undefined) {
+        progress[playerId] = current;
+      } else if (previous !== undefined) {
+        progress[playerId] = previous;
+      }
+      return progress;
+    },
+    {},
+  );
   return {
     ...right,
     elapsedMs: Math.round(lerp(left.elapsedMs, right.elapsedMs, alpha)),
+    fireControl: {
+      ...right.fireControl,
+      progressByPlayer,
+    },
     players: mergeSnapshotEntities(left.players, right.players, (previous, current) => ({
       ...current,
       x: lerp(previous.x, current.x, alpha),

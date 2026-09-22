@@ -16,21 +16,23 @@ export interface FireControlProfile {
 
 export interface FireControlSnapshot {
   profileIndex: number;
-  progress: number;
+  progressByPlayer: Partial<Record<DuoPlayerId, number>>;
   requirement: number;
   dropState: FireControlDropState;
 }
 
 interface FireControlHooks {
+  onProgressReset: (previousProgressByPlayer: Partial<Record<DuoPlayerId, number>>) => void;
   onDropStarted: () => void;
   onDropReady: () => void;
   onProfileInstalled: (profile: FireControlProfile) => void;
 }
 
-// The first package arrives quickly enough to teach the loop. Later packages
-// are spaced around the introduction of heavier threats instead of arriving
-// during the opening waves.
-export const FIRE_CONTROL_REQUIREMENTS = [32, 220, 340, 480, 900];
+// The first package arrives quickly enough to teach the loop. The later
+// packages keep getting harder without the opening 32 -> 220 cliff, while the
+// final package remains a long-run achievement.
+export const FIRE_CONTROL_REQUIREMENTS = [32, 120, 220, 360, 560];
+export const FIRE_CONTROL_BOSS_KILL_VALUE = 20;
 
 export const FIRE_CONTROL_PROFILES: FireControlProfile[] = [
   {
@@ -104,8 +106,10 @@ export const FIRE_CONTROL_PROFILES: FireControlProfile[] = [
 export class FireControlSystem {
   private profileIndex = 0;
   private dropState: FireControlDropState = 'none';
+  private queuedDrops = 0;
+  // Kills belong to individual players, but a completed meter is a squad-wide
+  // milestone: both meters reset and both weapons share the resulting mod.
   private readonly contributions = new Map<DuoPlayerId, number>();
-  private readonly pendingContributions = new Map<DuoPlayerId, number>();
 
   constructor(
     playerIds: DuoPlayerId[],
@@ -122,35 +126,26 @@ export class FireControlSystem {
     const requirement = this.requirement();
     return {
       profileIndex: this.profileIndex,
-      progress: this.progress(),
+      progressByPlayer: this.progressByPlayer(),
       requirement,
       dropState: this.dropState,
     };
   }
 
-  recordKill(playerId: DuoPlayerId): void {
+  recordKill(playerId: DuoPlayerId, amount = 1): void {
     if (this.profileIndex >= FIRE_CONTROL_PROFILES.length - 1) return;
-    const target = this.dropState === 'descending'
-      ? this.pendingContributions
-      : this.contributions;
-    if (!target.has(playerId)) target.set(playerId, 0);
-    target.set(playerId, (target.get(playerId) ?? 0) + 1);
-    if (this.dropState === 'none' && this.progress() >= this.requirement()) {
-      this.beginDrop();
-    }
+    if (!this.contributions.has(playerId)) this.contributions.set(playerId, 0);
+    this.contributions.set(playerId, (this.contributions.get(playerId) ?? 0) + Math.max(0, amount));
+    if (this.hasCompletedMeter()) this.triggerDrop();
   }
 
   recordDamage(playerId: DuoPlayerId): void {
     if (!this.contributions.has(playerId)) this.contributions.set(playerId, 0);
     this.contributions.set(playerId, 0);
-    this.pendingContributions.set(playerId, 0);
   }
 
   markDropReady(): void {
     if (this.dropState !== 'descending') return;
-    this.contributions.clear();
-    this.pendingContributions.forEach((value, id) => this.contributions.set(id, value));
-    this.pendingContributions.clear();
     this.dropState = 'ready';
     this.hooks.onDropReady();
   }
@@ -164,8 +159,16 @@ export class FireControlSystem {
     this.profileIndex += 1;
     this.dropState = 'none';
     this.hooks.onProfileInstalled(this.profile());
-    if (this.progress() >= this.requirement()) {
-      this.beginDrop();
+    if (this.profileIndex >= FIRE_CONTROL_PROFILES.length - 1) {
+      this.queuedDrops = 0;
+      return true;
+    }
+    if (this.queuedDrops > 0) {
+      this.queuedDrops -= 1;
+      this.dropState = 'descending';
+      this.hooks.onDropStarted();
+    } else if (this.hasCompletedMeter()) {
+      this.triggerDrop();
     }
     return true;
   }
@@ -179,26 +182,29 @@ export class FireControlSystem {
     this.dropState = snapshot.dropState === 'descending' || snapshot.dropState === 'ready'
       ? snapshot.dropState
       : 'none';
-    const progress = Math.max(0, Math.round(snapshot.progress));
     const existingIds = [...this.contributions.keys()];
-    if (existingIds.length === 0) this.contributions.set('host', progress);
-    else {
-      existingIds.forEach((id, index) => this.contributions.set(id, index === 0 ? progress : 0));
-    }
-    this.pendingContributions.clear();
+    existingIds.forEach((id) => {
+      const progress = Number(snapshot.progressByPlayer?.[id] ?? 0);
+      this.contributions.set(id, Number.isFinite(progress) ? Math.max(0, Math.round(progress)) : 0);
+    });
+    this.queuedDrops = 0;
   }
 
   applyNetworkProfile(profileIndex: number): void {
-    this.applyNetworkSnapshot({
-      profileIndex,
-      progress: 0,
-      requirement: this.requirement(),
-      dropState: 'none',
-    });
+    this.profileIndex = Math.max(0, Math.min(
+      FIRE_CONTROL_PROFILES.length - 1,
+      Math.round(profileIndex),
+    ));
+    this.dropState = 'none';
+    this.queuedDrops = 0;
   }
 
-  progress(): number {
-    return [...this.contributions.values()].reduce((total, value) => total + value, 0);
+  progress(playerId: DuoPlayerId): number {
+    return this.contributions.get(playerId) ?? 0;
+  }
+
+  progressByPlayer(): Partial<Record<DuoPlayerId, number>> {
+    return Object.fromEntries(this.contributions.entries()) as Partial<Record<DuoPlayerId, number>>;
   }
 
   requirement(): number {
@@ -209,21 +215,20 @@ export class FireControlSystem {
     return Math.round(baseInterval * this.profile().fireIntervalMultiplier);
   }
 
-  private beginDrop(): void {
+  private hasCompletedMeter(): boolean {
     const requirement = this.requirement();
-    let overflow = Math.max(0, this.progress() - requirement);
-    this.pendingContributions.clear();
-    if (overflow > 0) {
-      this.contributions.forEach((value, id) => {
-        if (overflow <= 0) return;
-        const carried = Math.min(value, overflow);
-        if (carried <= 0) return;
-        this.contributions.set(id, value - carried);
-        this.pendingContributions.set(id, carried);
-        overflow -= carried;
-      });
+    return [...this.contributions.values()].some((value) => value >= requirement);
+  }
+
+  private triggerDrop(): void {
+    const previousProgressByPlayer = this.progressByPlayer();
+    this.contributions.forEach((_value, id) => this.contributions.set(id, 0));
+    this.hooks.onProgressReset(previousProgressByPlayer);
+    if (this.dropState === 'none') {
+      this.dropState = 'descending';
+      this.hooks.onDropStarted();
+    } else {
+      this.queuedDrops += 1;
     }
-    this.dropState = 'descending';
-    this.hooks.onDropStarted();
   }
 }

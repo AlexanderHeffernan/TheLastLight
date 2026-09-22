@@ -57,7 +57,7 @@ export type FireControlDropState = 'none' | 'descending' | 'ready';
 
 export interface FireControlSnapshot {
   profileIndex: number;
-  progress: number;
+  progressByPlayer: Partial<Record<DuoPlayerId, number>>;
   requirement: number;
   dropState: FireControlDropState;
 }
