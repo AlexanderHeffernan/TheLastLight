@@ -71,6 +71,8 @@ const homeScreen = new HomeScreen({
     ]);
     launchOptions = options;
     setGameLaunchOptions(options);
+    document.querySelector<HTMLButtonElement>('[data-mobile-action="pause"]')
+      ?.toggleAttribute('hidden', options.mode === 'duos' && options.role === 'guest');
     if (options.mode === 'solo') {
       document.querySelector('#home')?.classList.add('hidden');
       document.querySelector('#game-shell')?.classList.remove('hidden');

@@ -1,4 +1,5 @@
 import type {
+  DuoCombatReport,
   DuoEvent,
   DuoInput,
   DuoLobbyState,
@@ -63,6 +64,7 @@ interface RestartDescriptionResponse {
 export interface DuoSessionCallbacks {
   lobby?: (state: DuoLobbyState) => void;
   input?: (input: DuoInput) => void;
+  combat?: (report: DuoCombatReport) => void;
   snapshot?: (snapshot: DuoSnapshot) => void;
   started?: () => void;
   ready?: () => void;
@@ -93,7 +95,7 @@ export class DuoSession {
   private readonly callbacks: DuoSessionCallbacks;
   private runtimeCallbacks: Pick<
     DuoSessionCallbacks,
-    'input' | 'snapshot' | 'ready' | 'redeploy' | 'paused' | 'event'
+    'input' | 'combat' | 'snapshot' | 'ready' | 'redeploy' | 'paused' | 'event'
   > = {};
   private readonly hostToken?: string;
   private readonly localCallsign: string;
@@ -236,7 +238,7 @@ export class DuoSession {
   setRuntimeCallbacks(
     callbacks: Pick<
       DuoSessionCallbacks,
-      'input' | 'snapshot' | 'ready' | 'redeploy' | 'paused' | 'event'
+      'input' | 'combat' | 'snapshot' | 'ready' | 'redeploy' | 'paused' | 'event'
     >,
   ): void {
     this.runtimeCallbacks = { ...callbacks };
@@ -297,6 +299,12 @@ export class DuoSession {
     } catch {
       this.beginReconnectGrace('The multiplayer input connection was lost.');
     }
+  }
+
+  sendCombatReport(report: DuoCombatReport): void {
+    if (this.role !== 'guest' || !this.isConnected || !this.started
+      || this.localLifecyclePaused || this.remoteLifecyclePaused) return;
+    this.send({ type: 'combat', report });
   }
 
   sendEvent(event: DuoEvent): void {
@@ -909,6 +917,11 @@ export class DuoSession {
         || !input || !Number.isInteger(input.sequence) || input.sequence <= this.lastInputSequence) return;
       this.lastInputSequence = input.sequence;
       this.runtimeCallbacks.input?.(input);
+      return;
+    }
+    if (message.type === 'combat' && this.role === 'host' && this.started
+      && !this.localLifecyclePaused && !this.remoteLifecyclePaused) {
+      this.runtimeCallbacks.combat?.(message.report as DuoCombatReport);
       return;
     }
     if (message.type === 'ready' && this.role === 'host') {

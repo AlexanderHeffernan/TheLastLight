@@ -158,8 +158,11 @@ export class LightingSystem {
       });
     }
 
-    this.radialMask.setPosition(playerX, playerY).setScale(0.4).setAlpha(0.52);
-    this.darkness.erase(this.radialMask);
+    playerLights.forEach((light) => {
+      if (light.active === false) return;
+      this.radialMask.setPosition(light.x, light.y).setScale(0.4).setAlpha(0.52);
+      this.darkness.erase(this.radialMask);
+    });
 
     if (!this.generatorDestroyed && this.outpostPower > 0.01) {
       this.emitters.forEach((light, index) => {

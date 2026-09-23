@@ -10,6 +10,14 @@ export interface DuoInput {
   interact: boolean;
 }
 
+// Ordered, reliable guest reports. The host applies shared damage and scoring,
+// while the guest reports collisions its own player can resolve immediately.
+export type DuoCombatReport =
+  | { kind: 'shot'; shotId: number; angle: number }
+  | { kind: 'zombie-hit'; shotId: number; zombieId: string; lethal: boolean }
+  | { kind: 'prop-hit'; shotId: number; propId: string }
+  | { kind: 'contact'; contactId: number; zombieId: string };
+
 export interface PlayerSnapshot {
   id: DuoPlayerId;
   callsign: string;
@@ -22,6 +30,7 @@ export interface PlayerSnapshot {
   alive: boolean;
   eliminations: number;
   invulnerableUntil: number;
+  invulnerableRemainingMs?: number;
   flareCharges: number;
   lastProcessedInput?: number;
 }

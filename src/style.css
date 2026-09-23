@@ -1163,8 +1163,8 @@ button { border-radius: 0; }
     pointer-events: none;
   }
 
-  .mobile-stick-move { left: calc(10px + env(safe-area-inset-left)); border-color: rgb(179 132 103 / 0.42); }
-  .mobile-stick-aim { right: calc(10px + env(safe-area-inset-right)); }
+  .mobile-stick-move { left: calc(10px + env(safe-area-inset-left)); }
+  .mobile-stick-aim { right: calc(10px + env(safe-area-inset-right)); border-color: rgb(179 132 103 / 0.42); }
   .mobile-stick-thumb {
     position: absolute;
     top: 50%;
@@ -1177,7 +1177,7 @@ button { border-radius: 0; }
     transform: translate(-50%, -50%);
     z-index: 1;
   }
-  .mobile-stick-move .mobile-stick-thumb {
+  .mobile-stick-aim .mobile-stick-thumb {
     border-color: rgb(241 178 135 / 0.55);
     background: rgb(159 75 58 / 0.72);
   }
@@ -1215,6 +1215,7 @@ button { border-radius: 0; }
     width: clamp(38px, 9vh, 50px);
     height: clamp(38px, 9vh, 50px);
   }
+  .mobile-action-pause[hidden] { display: none; }
   .mobile-action:disabled { opacity: 0.3; }
 }
 
