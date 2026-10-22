@@ -15,7 +15,7 @@ run_step() {
 }
 
 run_step "Checking Node.js version" node -e \
-  "const major = Number(process.versions.node.split('.')[0]); if (major < 20) { console.error('Node.js 20 or newer is required'); process.exit(1); }"
+  "const [major, minor, patch] = process.versions.node.split('.').map(Number); if (major !== 24 || minor < 22 || (minor === 22 && patch < 1)) { console.error('Node.js 24.22.1 or newer within the Node 24 LTS line is required'); process.exit(1); }"
 run_step "Installing locked npm dependencies" npm ci --no-audit --no-fund
 
 printf 'Orb setup complete.\n'

@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM node:20-alpine AS build
+FROM --platform=$BUILDPLATFORM node:24.22.1-alpine AS build
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ COPY --chown=node:node public ./public
 RUN npm ci && npm run build && npm prune --omit=dev
 RUN mkdir -p /data && chown node:node /data
 
-FROM node:20-alpine
+FROM node:24.22.1-alpine
 
 WORKDIR /app
 
