@@ -34,6 +34,8 @@ The browser owns the single-player simulation. In private duos, the host browser
 
 ## Run Locally
 
+Use Node.js 24 LTS (24.22.1 or newer within the 24.x line), matching the Docker build and runtime.
+
 ```sh
 npm install
 npm run dev
